@@ -1,3 +1,9 @@
+###################
+#### version 1 ####
+###################
+# the number of transformed categories vary from 1 to 388,
+# three types of transformations are tested: blur, scale, quantization.
+
 import os
 import sys
 import argparse
@@ -23,8 +29,10 @@ def parse_args():
     parser.add_argument('-s', '--is_slurm', default=False, type=bool, help='use slurm')
     parser.add_argument('-m', '--model_path', default='./', type=str, help='model path')
     parser.add_argument('-d', '--data_path', default='./', type=str, help='data path')
+    parser.add_argument('-c', '--csv_path', default='./', type=str, help='csv path')
     parser.add_argument('-v', '--version', default=1, type=int, help='experiment version')
     parser.add_argument('-i', '--id', default=1, type=int, help='slurm array task id')
+    parser.add_argument('-t', '--trial', default=1, type=int, help='trial number')
     args = parser.parse_args()
 
     return args
@@ -36,17 +44,17 @@ def main(args):
     batch_size = 64
     lr = 1e-3
     total_epochs = 500
-    save_epochs = 250
-
-    #### gpus?
-    args.num_gpus = torch.cuda.device_count()
-    if args.num_gpus > 0:
-        device_ids = [int(g) for g in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
+    save_epochs = 500
 
     #### model
     # model = torchvision.models.alexnet(pretrained=False)
     # model.classifier[6] = torch.nn.Linear(model.classifier[6].in_features, num_categories)
     model = alexnet(num_classes=num_categories)
+
+    #### gpus?
+    args.num_gpus = torch.cuda.device_count()
+    if args.num_gpus > 0:
+        device_ids = [int(g) for g in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
 
     if args.num_gpus > 1:
         model = torch.nn.DataParallel(model, device_ids=device_ids).cuda()
@@ -92,34 +100,30 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[], gamma=0.1, last_epoch=-1)
 
     #### data loader
-    dataset = CustomDataset(
+    train_dataset = CustomDataset(
         args.data_path,
+        os.path.join(args.csv_path, 'train.csv'),
+        transforms.Compose([
+            # transforms.RandomAffine(degrees=15, translate=(0.1, 0.1)),
+            transforms.Resize(100),
+            # transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+        ]),
     )
 
-    train_idx, val_idx, num_val_samples = [], [], 10
-    for c in range(len(dataset.classes)):
-        idx = [i for i, v in enumerate(dataset.targets) if v == c]
-        val_idx.extend(idx[:num_val_samples])
-        train_idx.extend(idx[num_val_samples:])
-    train_dataset = torch.utils.data.Subset(dataset, train_idx)
-    val_dataset = torch.utils.data.Subset(dataset, val_idx)
-
-    train_dataset.dataset = copy(dataset)
-    train_dataset.dataset.transforms = transforms.Compose([
-        # transforms.RandomAffine(degrees=15, translate=(0.1, 0.1)),
-        transforms.Resize(100),
-        # transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-    ])
-    val_dataset.dataset.transforms = transforms.Compose([
-        transforms.Resize(100),
-        transforms.ToTensor(),
-    ])
+    val_dataset = CustomDataset(
+        args.data_path,
+        os.path.join(args.csv_path, 'val.csv'),
+        transforms.Compose([
+            transforms.Resize(100),
+            transforms.ToTensor(),
+        ]),
+    )
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
 
-    random.seed(args.version) # seed fixed
+    random.seed(args.trial) # seed fixed
     args.category_orders = [i for i in range(num_categories)]
     random.shuffle(args.category_orders)
 
@@ -153,11 +157,11 @@ def train(train_loader, model, loss_function, optimizer, epoch, stat_file, args)
             targets = targets.cuda(non_blocking=True)
 
         if args.transformation_type == 'blur':
-            inputs = blur(inputs, 4, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets])
+            inputs = blur(inputs, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets], 4)
         elif args.transformation_type == 'scale':
-            inputs = scale(inputs, 0.1, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets])
+            inputs = scale(inputs, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets], 0.1)
         elif args.transformation_type == 'quantization':
-            inputs = quantization(inputs, 0.1, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets])
+            inputs = quantization(inputs, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets], 0.1)
 
         # for i in range(inputs.size(0)):
         #     fig, axes = plt.subplots(1,1)
@@ -191,7 +195,7 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, args):
 
     model.eval()
     loss_sum, num_correct1, num_correct5, batch_size_sum = 0., 0., 0., 0. # Accuracy
-    correct1, correct5 = [0] * len(val_loader.dataset.indices), [0] * len(val_loader.dataset.indices) # Correct
+    correct1, correct5 = [0] * len(val_loader.dataset), [0] * len(val_loader.dataset) # Correct
 
     for batch_index, (inputs, targets, paths, indices) in enumerate(val_loader):
 
@@ -200,11 +204,11 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, args):
             targets = targets.cuda(non_blocking=True)
 
         if args.transformation_type == 'blur':
-            inputs = blur(inputs, 4, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets])
+            inputs = blur(inputs, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets], 4)
         elif args.transformation_type == 'scale':
-            inputs = scale(inputs, 0.1, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets])
+            inputs = scale(inputs, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets], 0.1)
         elif args.transformation_type == 'quantization':
-            inputs = quantization(inputs, 0.1, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets])
+            inputs = quantization(inputs, [True if t in args.category_orders[:args.num_category_transformed] else False for t in targets], 0.1)
 
         outputs = model(inputs)
         loss = loss_function(outputs, targets)
@@ -218,7 +222,6 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, args):
         num_correct5 += num_correct5_batch.item()
         batch_size_sum += targets.size(0)
 
-        indices = [val_loader.dataset.indices.index(idx) for idx in indices]
         for i, index in enumerate(indices):
             #### correct
             correct1[index] = correct1_batch.view(-1)[i].item()
@@ -242,17 +245,24 @@ def is_correct(output, target, topk=1):
 if __name__ == '__main__':
     args = parse_args()
 
-    #### version 1
-    args.version = 1
+    #### define parameters
+    args.trial = 1
     params1 = [1, 50, 100, 150, 200, 250, 300, 350, 388] # number of transformed categories
     params2 = ['blur', 'scale', 'quantization'] # transformation types
-    args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1, params2)][args.id-1]
+
+    if args.id == 0:
+        args.num_category_transformed, args.transformation_type = 0, 'none'
+    else:
+        args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1, params2)][args.id-1]
 
     #### slurm or local
     if args.is_slurm == True:
-        args.model_path = os.path.join(args.model_path, 'v{}/id{}'.format(args.version, args.id))
+        args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/id{}_t{}'.format(args.version, args.id, args.trial)
+        args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
+        args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
     elif args.is_slurm == False:
-        args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/id{}'.format(args.version, args.id)
-        args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub'
+        args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/id{}_t{}'.format(args.version, args.id, args.trial)
+        args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/data/'
+        args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/csv/'
 
     main(args)

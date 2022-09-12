@@ -70,12 +70,6 @@ def main(model_path):
 
 if __name__ == '__main__':
 
-    main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id1/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id2/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id3/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id4/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id5/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id6/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id7/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id8/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v1/id9/training_stats.txt')
+    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v2/id0_t1/training_stats.txt')
+    main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v2/id1_t1/training_stats.txt')
+    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v2/id2_t1/training_stats.txt')

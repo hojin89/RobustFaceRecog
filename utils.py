@@ -146,17 +146,13 @@ class ImageFolderWithPaths(datasets.ImageFolder):
 class CustomDataset(torch.utils.data.Dataset):
 
     def read(self):
-        images, labels = [], []
-
-        # filenames = os.walk(self.root).__next__()[2]
-        # filenames.sort()
-
-        df = pandas.read_csv(self.root + '.csv')
+        df = pandas.read_csv(self.csv_path)
         filenames = df['filename'].tolist()
+        labels = df['label'].tolist()
 
+        images = []
         for filename in filenames:
-            images.append(os.path.join(self.root, filename))
-            labels.append(filename.split('_')[0])
+            images.append(os.path.join(self.data_path, filename))
 
         classes = list(sorted(set(labels)))
         class_to_idx = {classes[i]:i for i in range(0, len(classes))}
@@ -164,8 +160,9 @@ class CustomDataset(torch.utils.data.Dataset):
 
         return images, targets, classes, class_to_idx
 
-    def __init__(self, root, transforms=None):
-        self.root = root
+    def __init__(self, data_path, csv_path, transforms=None):
+        self.data_path = data_path
+        self.csv_path = csv_path
         self.transforms = transforms
         self.images, self.targets, self.classes, self.class_to_idx = self.read()
         self.samples = list(zip(self.images, self.targets))

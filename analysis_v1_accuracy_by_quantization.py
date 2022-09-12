@@ -24,8 +24,10 @@ def parse_args():
     parser.add_argument('-s', '--is_slurm', default=False, type=bool, help='use slurm')
     parser.add_argument('-m', '--model_path', default='./', type=str, help='model path')
     parser.add_argument('-d', '--data_path', default='./', type=str, help='data path')
+    parser.add_argument('-c', '--csv_path', default='./', type=str, help='csv path')
     parser.add_argument('-v', '--version', default=1, type=int, help='experiment version')
     parser.add_argument('-i', '--id', default=1, type=int, help='slurm array task id')
+    parser.add_argument('-t', '--trial', default=1, type=int, help='trial number')
     args = parser.parse_args()
 
     return args
@@ -93,41 +95,37 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[], gamma=0.1, last_epoch=-1)
 
     #### data loader
-    dataset = CustomDataset(
+    # train_dataset = CustomDataset(
+    #     args.data_path,
+    #     os.path.join(args.csv_path, 'train.csv'),
+    #     transforms.Compose([
+    #         # transforms.RandomAffine(degrees=15, translate=(0.1, 0.1)),
+    #         transforms.Resize(100),
+    #         # transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #     ]),
+    # )
+
+    val_dataset = CustomDataset(
         args.data_path,
+        os.path.join(args.csv_path, 'val.csv'),
+        transforms.Compose([
+            transforms.Resize(100),
+            transforms.ToTensor(),
+        ]),
     )
 
-    train_idx, val_idx, num_val_samples = [], [], 10
-    for c in range(len(dataset.classes)):
-        idx = [i for i, v in enumerate(dataset.targets) if v == c]
-        val_idx.extend(idx[:num_val_samples])
-        train_idx.extend(idx[num_val_samples:])
-    train_dataset = torch.utils.data.Subset(dataset, train_idx)
-    val_dataset = torch.utils.data.Subset(dataset, val_idx)
-
-    train_dataset.dataset = copy(dataset)
-    train_dataset.dataset.transforms = transforms.Compose([
-        # transforms.RandomAffine(degrees=15, translate=(0.1, 0.1)),
-        transforms.Resize(100),
-        # transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-    ])
-    val_dataset.dataset.transforms = transforms.Compose([
-        transforms.Resize(100),
-        transforms.ToTensor(),
-    ])
-
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+    # train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
 
-    random.seed(args.version) # seed fixed
+    random.seed(args.trial) # seed fixed
     args.category_orders = [i for i in range(num_categories)]
     random.shuffle(args.category_orders)
+    args.is_transformed = [True if t in args.category_orders[:args.num_category_transformed] else False for t in val_dataset.targets]
 
     #### val
     epoch = start_epoch
-    # path, target = zip(*val_loader.dataset.samples)
-    path, target = zip(*[val_loader.dataset.dataset.samples[index] for index in val_loader.dataset.indices])
+    path, target = zip(*val_loader.dataset.samples)
 
     # if args.transformation_type == 'blur':
     #     params = [0., 0.5, 1., 1.5, 2., 2.5, 3., 3.5, 4.]
@@ -137,23 +135,23 @@ def main(args):
     #     params = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.]
     params = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.] # quantization
 
-    accuracy1, correct1, accuracy5, correct5, predict = \
+    accuracy1, correct1, accuracy1_within, accuracy1_across, predict = \
         numpy.zeros((len(params))), numpy.zeros((len(params), len(path))), \
-        numpy.zeros((len(params))), numpy.zeros((len(params), len(path))), numpy.zeros((len(params), len(path)))
+        numpy.zeros((len(params))), numpy.zeros((len(params))), numpy.zeros((len(params), len(path)))
 
     print("Start epoch at '{}'".format(epoch))
     stat_file = open(os.path.join(args.model_path, 'training_stats.txt'), 'r')
 
-    for idx, param in enumerate(params):
-        accuracy1_, correct1_, accuracy5_, correct5_, predict_ = \
+    for i, param in enumerate(params):
+        accuracy1_, correct1_, accuracy1_within_, accuracy1_across_, predict_ = \
             val(val_loader, model, loss_function, optimizer, epoch, stat_file, param, args)
-        accuracy1[idx] = accuracy1_
-        correct1[idx,:] = correct1_
-        accuracy5[idx] = accuracy5_
-        correct5[idx,:] = correct5_
-        predict[idx,:] = predict_
+        accuracy1[i] = accuracy1_
+        correct1[i,:] = correct1_
+        accuracy1_within[i] = accuracy1_within_
+        accuracy1_across[i] = accuracy1_across_
+        predict[i,:] = predict_
 
-    data = {'path':path, 'target':target, 'params':params, 'accuracy1':accuracy1, 'correct1':correct1, 'accuracy5':accuracy5, 'correct5':correct5, 'predict':predict}
+    data = {'path':path, 'target':target, 'params':params, 'is_transformed':args.is_transformed, 'accuracy1':accuracy1, 'correct1':correct1, 'accuracy1_within':accuracy1_within, 'accuracy1_across':accuracy1_across, 'predict':predict}
     with open(os.path.join(args.model_path, 'analysis_v1_accuracy_by_quantization.pickle'), 'wb') as f:
         pickle.dump(data, f)
 
@@ -161,8 +159,8 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, param, ar
 
     model.eval()
     loss_sum, num_correct1, num_correct5, batch_size_sum = 0., 0., 0., 0. # Accuracy
-    # correct1, correct5, predict = [0] * len(val_loader.dataset.samples), [0] * len(val_loader.dataset.samples), [0] * len(val_loader.dataset.samples)
-    correct1, correct5, predict = [0] * len(val_loader.dataset.indices), [0] * len(val_loader.dataset.indices), [0] * len(val_loader.dataset.indices)
+    correct1, correct5, predict = [0] * len(val_loader.dataset), [0] * len(val_loader.dataset), [0] * len(val_loader.dataset)
+    num_correct1_transformed, num_correct1_nontransformed, batch_size_sum_transformed, batch_size_sum_nontransformed = 0., 0., 0., 0.
 
     for batch_index, (inputs, targets, paths, indices) in enumerate(val_loader):
 
@@ -184,13 +182,19 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, param, ar
         correct1_batch, num_correct1_batch, predict_batch = is_correct(outputs, targets, topk=1)
         correct5_batch, num_correct5_batch, _ = is_correct(outputs, targets, topk=5)
 
+        correct1_batch_transformed = correct1_batch[0, numpy.where([args.is_transformed[i] for i in indices])[0]]
+        correct1_batch_nontransformed = correct1_batch[0, numpy.where(numpy.invert([args.is_transformed[i] for i in indices]))[0]]
+        num_correct1_transformed += correct1_batch_transformed.float().sum().item()
+        num_correct1_nontransformed += correct1_batch_nontransformed.float().sum().item()
+        batch_size_sum_transformed += len(correct1_batch_transformed)
+        batch_size_sum_nontransformed += len(correct1_batch_nontransformed)
+
         #### accuracy
         loss_sum += loss.item()
         num_correct1 += num_correct1_batch.item()
         num_correct5 += num_correct5_batch.item()
         batch_size_sum += targets.size(0)
 
-        indices = [val_loader.dataset.indices.index(idx) for idx in indices]
         for i, index in enumerate(indices):
             #### correct
             correct1[index] = correct1_batch.view(-1)[i].item()
@@ -199,11 +203,15 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, param, ar
             #### predict
             predict[index] = predict_batch.view(-1)[i].item()
 
+        #### accuracy within & across
+        accuracy1_within = 0. if batch_size_sum_transformed == 0. else num_correct1_transformed / batch_size_sum_transformed
+        accuracy1_across = 0. if batch_size_sum_nontransformed == 0. else num_correct1_nontransformed / batch_size_sum_nontransformed
+
         stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f}) Accuracy5 ({:.4f})'.\
             format(epoch, optimizer.param_groups[0]['lr'], loss_sum / (batch_index + 1), num_correct1 / batch_size_sum, num_correct5 / batch_size_sum)
         # progress_bar(batch_index, len(val_loader.dataset) / inputs.size(0), stat_str)
 
-    return (num_correct1 / batch_size_sum, correct1, num_correct5 / batch_size_sum, correct5, predict)
+    return (num_correct1 / batch_size_sum, correct1, accuracy1_within, accuracy1_across, predict)
 
 def is_correct(output, target, topk=1):
     with torch.no_grad():
@@ -217,17 +225,26 @@ def is_correct(output, target, topk=1):
 if __name__ == '__main__':
     args = parse_args()
 
-    #### version 1
-    args.version = 1
-    params1 = [1, 50, 100, 150, 200, 250, 300, 350, 388] # number of transformed categories
-    params2 = ['blur', 'scale', 'quantization'] # transformation types
-    args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1, params2)][args.id-1]
+    for trial in [1,2,3]:
 
-    #### slurm or local
-    if args.is_slurm == True:
-        args.model_path = os.path.join(args.model_path, 'v{}/id{}'.format(args.version, args.id))
-    elif args.is_slurm == False:
-        args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/id{}'.format(args.version, args.id)
-        args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub'
+        #### define parameters
+        args.trial = trial
+        params1 = [1, 50, 100, 150, 200, 250, 300, 350, 388] # number of transformed categories
+        params2 = ['blur', 'scale', 'quantization'] # transformation types
 
-    main(args)
+        if args.id == 0:
+            args.num_category_transformed, args.transformation_type = 0, 'none'
+        else:
+            args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1, params2)][args.id-1]
+
+        #### slurm or local
+        if args.is_slurm == True:
+            args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/id{}_t{}'.format(args.version, args.id, args.trial)
+            args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
+            args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
+        elif args.is_slurm == False:
+            args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/id{}_t{}'.format(args.version, args.id, args.trial)
+            args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/data/'
+            args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/csv/'
+
+        main(args)
