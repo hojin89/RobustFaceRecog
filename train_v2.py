@@ -20,7 +20,7 @@ import torchvision.transforms as transforms
 
 from models.alexnet import alexnet
 from utils import *
-from tranformations import *
+from transformations import *
 
 torch.backends.cudnn.benchmark = True
 
@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument('-d', '--data_path', default='./', type=str, help='data path')
     parser.add_argument('-c', '--csv_path', default='./', type=str, help='csv path')
     parser.add_argument('-v', '--version', default=2, type=int, help='experiment version')
+    parser.add_argument('-j', '--job', default=1, type=int, help='slurm array job id')
     parser.add_argument('-i', '--id', default=1, type=int, help='slurm array task id')
     parser.add_argument('-t', '--trial', default=1, type=int, help='trial number')
     args = parser.parse_args()
@@ -124,14 +125,14 @@ def main(args):
     args.category_orders = [i for i in range(num_categories)]
     random.shuffle(args.category_orders)
 
-    if args.transformation_type != 'none':
+    if args.transformation_type == 'blur' or args.transformation_type == 'turbulence':
         seen_categories = args.category_orders[:args.num_category_transformed]
 
         #### train
         unseen_indices = []
         for i, imgpth in enumerate(train_dataset.images):
             filename = imgpth.split('/')[-1].split('_')
-            if int(filename[0]) not in seen_categories:
+            if train_dataset.class_to_idx[int(filename[0])] not in seen_categories:
                 if args.transformation_type == 'blur':
                     if filename[2].replace('.jpg','') in ['0.6', '0.7', '1', '1.2', '1.8', '3.3']:
                         unseen_indices.append(i)
@@ -147,7 +148,7 @@ def main(args):
         unseen_indices = []
         for i, imgpth in enumerate(val_dataset.images):
             filename = imgpth.split('/')[-1].split('_')
-            if int(filename[0]) not in seen_categories:
+            if val_dataset.class_to_idx[int(filename[0])] not in seen_categories:
                 if args.transformation_type == 'blur':
                     if filename[2].replace('.jpg','') in ['0.6', '0.7', '1', '1.2', '1.8', '3.3']:
                         unseen_indices.append(i)
@@ -159,7 +160,8 @@ def main(args):
             del val_dataset.samples[i]
             del val_dataset.targets[i]
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+    # train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
 
     #### train and val
@@ -191,7 +193,21 @@ def train(train_loader, model, loss_function, optimizer, epoch, stat_file, args)
             inputs = inputs.cuda(non_blocking=True)
             targets = targets.cuda(non_blocking=True)
 
-        if args.transformation_type == 'none':
+        if args.transformation_type == 'blur2':
+            args.num_categories_transformed = args.num_category_transformed
+            args.transformation_sampling = 'discrete'
+            args.transformation_levels = [0, 0.6, 0.7, 1, 1.2, 1.8, 3.3]
+            args.transformation_type = 'blur'
+            inputs = transformations_torch(inputs, targets, args)
+            args.transformation_type = 'blur2'
+        elif args.transformation_type == 'blur3':
+            args.num_categories_transformed = args.num_category_transformed
+            args.transformation_sampling = 'continuous'
+            args.transformation_levels = [0, 3.3]
+            args.transformation_type = 'blur'
+            inputs = transformations_torch(inputs, targets, args)
+            args.transformation_type = 'blur3'
+        if args.transformation_type != 'blur' and args.transformation_type != 'turbulence':
             inputs = rgb2gray(inputs) # rgb to gray
             inputs = inputs.repeat(1, 3, 1, 1)  # 1-channel to 3-channels
 
@@ -235,7 +251,21 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, args):
             inputs = inputs.cuda(non_blocking=True)
             targets = targets.cuda(non_blocking=True)
 
-        if args.transformation_type == 'none':
+        elif args.transformation_type == 'blur2':
+            args.num_categories_transformed = args.num_category_transformed
+            args.transformation_sampling = 'discrete'
+            args.transformation_levels = [0, 0.6, 0.7, 1, 1.2, 1.8, 3.3]
+            args.transformation_type = 'blur'
+            inputs = transformations_torch(inputs, targets, args)
+            args.transformation_type = 'blur2'
+        elif args.transformation_type == 'blur3':
+            args.num_categories_transformed = args.num_category_transformed
+            args.transformation_sampling = 'continuous'
+            args.transformation_levels = [0, 3.3]
+            args.transformation_type = 'blur'
+            inputs = transformations_torch(inputs, targets, args)
+            args.transformation_type = 'blur3'
+        if args.transformation_type != 'blur' and args.transformation_type != 'turbulence':
             inputs = rgb2gray(inputs) # rgb to gray
             inputs = inputs.repeat(1, 3, 1, 1)  # 1-channel to 3-channels
 
@@ -279,18 +309,24 @@ if __name__ == '__main__':
 
     #### define parameters
     args.trial = 1
-    params1 = [97, 194, 291] # number of transformed categories
-    params2 = ['blur', 'turbulence'] # transformation types
+    params1a = [97, 194, 291] # number of transformed categories
+    params1b = [1, 48, 145, 242, 339, 388]
+    params2a = ['blur', 'turbulence'] # transformation types
+    params2b = ['blur2', 'blur3'] # blur, pregenerated; blur2, on the fly & discrete; blur3, on the fly % continuous
 
     if args.id == 0:
         args.num_category_transformed, args.transformation_type = 0, 'none'
-    else:
-        args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1, params2)][args.id-1]
+    elif args.id >= 1 and args.id <= 6:
+        args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1a, params2a)][args.id-1]
+    elif args.id >= 7 and args.id <= 12:
+        args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1a, params2b)][args.id-1-6]
+    elif args.id >= 13 and args.id <= 22:
+        args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1b, params2a)][args.id-1-12]
 
     #### slurm or local
     if args.is_slurm == True:
         args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/id{}_t{}'.format(args.version, args.id, args.trial)
-        if args.transformation_type == 'none':
+        if args.transformation_type == 'none' or args.transformation_type == 'blur2' or args.transformation_type == 'blur3':
             args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
             args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
         elif args.transformation_type == 'blur':
@@ -301,7 +337,7 @@ if __name__ == '__main__':
             args.csv_path = '/om2/user/jangh/Datasets/FaceScrubTurbulence/csv/'
     elif args.is_slurm == False:
         args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/id{}_t{}'.format(args.version, args.id, args.trial)
-        if args.transformation_type == 'none':
+        if args.transformation_type == 'none' or args.transformation_type == 'blur2' or args.transformation_type == 'blur3':
             args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/data/'
             args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/csv/'
         elif args.transformation_type == 'blur':
@@ -310,5 +346,9 @@ if __name__ == '__main__':
         elif args.transformation_type == 'turbulence':
             args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubTurbulence/data/'
             args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubTurbulence/csv/'
+
+    #### create model folder & write slurm id
+    os.makedirs(args.model_path, exist_ok=True)
+    open(os.path.join(args.model_path, 'slurm_id.txt'), 'a+').write(str(args.job) + '_' + str(args.id) + '\n')
 
     main(args)

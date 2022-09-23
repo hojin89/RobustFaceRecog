@@ -21,17 +21,17 @@ def main(model_path):
                 train['lr'].append(float(data[4][1:-1]))
                 train['loss'].append(float(data[6][1:-1]))
                 train['accuracy1'].append(float(data[8][1:-1]))
-                train['accuracy5'].append(float(data[10][1:-1]))
+                # train['accuracy5'].append(float(data[10][1:-1]))
             elif 'Validation' in line:
                 val['epoch'].append(float(data[2][1:-1]))
                 val['lr'].append(float(data[4][1:-1]))
                 val['loss'].append(float(data[6][1:-1]))
                 val['accuracy1'].append(float(data[8][1:-1]))
-                val['accuracy5'].append(float(data[10][1:-1]))
+                # val['accuracy5'].append(float(data[10][1:-1]))
 
             line_index = line_index + 1
 
-        nrows, ncols = 1, 4
+        nrows, ncols = 1, 3
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(ncols * 3, nrows * 3))
 
         #### LR
@@ -58,18 +58,16 @@ def main(model_path):
         axes[2].legend(('Train', 'Validation'), frameon=False)
 
         #### Top5 accuracy
-        axes[3].plot(train['epoch'], train['accuracy5'])
-        axes[3].plot(val['epoch'], val['accuracy5'])
-        axes[3].set_title('Top5 accuracy')
-        axes[3].set_xlabel('Epoch')
-        axes[3].set_ylim([0, 1])
-        axes[3].yaxis.set_ticks(numpy.arange(0, 1, step=0.2))
-        axes[3].legend(('Train', 'Validation'), frameon=False)
+        # axes[3].plot(train['epoch'], train['accuracy5'])
+        # axes[3].plot(val['epoch'], val['accuracy5'])
+        # axes[3].set_title('Top5 accuracy')
+        # axes[3].set_xlabel('Epoch')
+        # axes[3].set_ylim([0, 1])
+        # axes[3].yaxis.set_ticks(numpy.arange(0, 1, step=0.2))
+        # axes[3].legend(('Train', 'Validation'), frameon=False)
 
         plt.show()
 
 if __name__ == '__main__':
 
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v2/id0_t1/training_stats.txt')
-    main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v2/id1_t1/training_stats.txt')
-    # main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v2/id2_t1/training_stats.txt')
+    main('/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v4/gradienttape/training_stats.txt')
