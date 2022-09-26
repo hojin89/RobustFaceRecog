@@ -25,7 +25,7 @@ import tensorflow as tf
 tf.config.run_functions_eagerly(True)
 
 from utils import *
-from transformations_v4 import *
+from transformations_v4_stronger import *
 
 from models.alexnet import alexnet
 from models.vgg import vgg19
@@ -539,7 +539,7 @@ if __name__ == '__main__':
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
         args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
     elif args.is_slurm == False:
-        args.model_format = 'convlstm3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0'
+        args.model_format = 'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0'
         args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubSuperMini/data/'
         args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubSuperMini/csv/'

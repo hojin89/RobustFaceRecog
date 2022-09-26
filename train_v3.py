@@ -250,162 +250,162 @@ def is_correct(output, target, topk=1):
 
         return correct, num_correct
 
-def main_tf(args):
-
-    #### set up parameters
-    num_categories = 388 # 388
-    batch_size = 32
-    lr = 1e-3
-    total_epochs = 300
-    save_epochs = 300
-    input_size = (100, 100, 3)
-
-    random.seed(args.trial) # seed fixed
-    args.category_orders = [i for i in range(num_categories)]
-    random.shuffle(args.category_orders) # to determine the number of transformed categories
-
-    ####################################################################################################################
-    #### dataset
-    ####################################################################################################################
-    def parse_df(filenames, labels):
-        file_paths = [os.path.join(args.data_path, filename) for filename in filenames]
-        classes = list(sorted(set(labels)))
-        class_to_idx = {classes[i]:i for i in range(0, len(classes))}
-        targets = [int(class_to_idx[label]) for label in labels]
-        return file_paths, targets, classes, class_to_idx
-
-    def load_dataset(file_paths, targets):
-        raw = tf.io.read_file(file_paths)
-        # img = tf.io.decode_jpeg(raw, channels=1) # grayscale
-        img = tf.io.decode_jpeg(raw, channels=3) # rgb
-        img = tf.image.convert_image_dtype(img, tf.float32) # [0, 255] int to [0, 1] float32
-        img = tf.image.resize(img, [input_size[0], input_size[1]])
-        return img, targets
-
-    train_preprocessing = tf.keras.Sequential([
-        # tf.keras.layers.experimental.preprocessing.Resizing(input_size[0], input_size[1]),
-        # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255),
-        # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 127.5, offset=-1),
-        # tf.keras.layers.experimental.preprocessing.RandomFlip("horizontal"),
-        # tf.keras.layers.experimental.preprocessing.RandomRotation(0.2),
-    ])
-    val_preprocessing = tf.keras.Sequential([
-        # tf.keras.layers.experimental.preprocessing.Resizing(input_size[0], input_size[1]),
-        # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255),
-        # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 127.5, offset=-1),
-    ])
-
-    AUTOTUNE = tf.data.experimental.AUTOTUNE
-
-    train_df = pandas.read_csv(os.path.join(args.csv_path, 'train.csv'))
-    file_paths, targets, _, _ = parse_df(train_df['filename'].values, train_df['label'].values)
-    train_dataset = tf.data.Dataset.from_tensor_slices((file_paths, numpy.eye(numpy.max(targets) + 1)[targets]))
-    train_dataset = train_dataset.shuffle(buffer_size=len(train_df)).map(load_dataset).map(lambda x, y: (train_preprocessing(x), y), num_parallel_calls=AUTOTUNE)
-    if args.transformation_type != 'none': # image transformations
-        train_dataset = train_dataset.map(lambda x, y: transformations_tf(x, y, args), num_parallel_calls=AUTOTUNE)
-    train_dataset = train_dataset.batch(batch_size).prefetch(buffer_size=AUTOTUNE)
-
-    val_df = pandas.read_csv(os.path.join(args.csv_path, 'val.csv'))
-    file_paths, targets, classes, class_to_idx = parse_df(val_df['filename'].values, val_df['label'].values)
-    val_dataset = tf.data.Dataset.from_tensor_slices((file_paths, numpy.eye(numpy.max(targets) + 1)[targets]))
-    val_dataset = val_dataset.map(load_dataset).map(lambda x, y: (val_preprocessing(x), y), num_parallel_calls=AUTOTUNE)
-    if args.transformation_type != 'none': # image transformations
-        val_dataset = val_dataset.map(lambda x, y: transformations_tf(x, y, args), num_parallel_calls=AUTOTUNE)
-    val_dataset = val_dataset.batch(batch_size).prefetch(buffer_size=AUTOTUNE)
-
-    # for inp, targ in train_dataset.take(4): # visualize
-    #     fig, axes = plt.subplots(2,2)
-    #     for i, ax in enumerate(axes.flat):
-    #         ax.imshow(inp.numpy()[i,:,:,:])
-    #         ax.set_title(targ.numpy()[i])
-    #     plt.show()
-
-    ####################################################################################################################
-    #### model
-    ####################################################################################################################
-
-    #### gpus?
-    if args.is_slurm == False:
-        args.num_gpus = 0
-    elif args.is_slurm == True:
-        physical_devices = tf.config.list_physical_devices('GPU')
-        args.num_gpus = len(physical_devices)
-
-    if args.num_gpus == 0:
-        devices = "/cpu:0"
-    elif args.num_gpus == 1:
-        devices = "/gpu:0"
-    elif args.num_gpus == 2:
-        devices = ["/gpu:0", "/gpu:1"]
-
-    #### define model with multi-GPUs
-    strategy = tf.distribute.MirroredStrategy(devices=devices) if args.num_gpus > 1 else tf.distribute.OneDeviceStrategy(device=devices)
-    with strategy.scope():
-
-        # if args.model_name == 'vgg16':
-        #     model = tf.keras.applications.VGG16(input_shape=input_size, include_top=True)
-        if args.model_name == 'blnet':
-            n_timesteps = 8
-            input_layer = tf.keras.layers.Input(input_size)
-            model = bl_net(input_layer, classes=num_categories, n_timesteps=n_timesteps, cumulative_readout=False)
-        elif args.model_name == 'convlstm3':
-            num_timesteps = 10
-            model = ConvLSTM3(input_size=input_size, num_classes=num_categories, num_timesteps=num_timesteps)
-            _ = model(tf.zeros((1,) + input_size))
-
-        load_path = os.path.join(args.model_path, 'checkpoint.hdf5')
-        if os.path.isfile(load_path):
-            model.load_weights(load_path)
-            with open(os.path.join(args.model_path, 'training_stats.txt'), 'r') as stat_file:
-                last_line = stat_file.readlines()[-1]
-                start_epoch = int(re.findall(r'Epoch \((\d)\)', last_line)[0]) + 1
-        else:
-            start_epoch = 0
-
-        model.summary()
-        model.compile(optimizer=tf.keras.optimizers.SGD(lr=lr, decay=1e-4, momentum=0.9), loss='categorical_crossentropy', metrics=['accuracy'])
-
-    ####################################################################################################################
-    #### train and val
-    ####################################################################################################################
-    callbacks = [
-        # tf.keras.callbacks.TensorBoard(log_dir=os.path.join(args.model_path, 'graph'), histogram_freq=0, write_graph=True, write_images=False),
-        # tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join(args.model_path, "checkpoint_epoch_{epoch}"), save_weights_only=True, save_freq='epoch', period=save_epochs),
-        tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join(args.model_path, 'checkpoint.hdf5'), save_weights_only=True, save_freq='epoch'),
-        CustomCallback(model, args.model_path, save_epochs)
-        # tf.keras.callbacks.LearningRateScheduler(),
-    ]
-    history = model.fit(train_dataset, validation_data=val_dataset, epochs=total_epochs, initial_epoch=start_epoch, callbacks=callbacks, verbose=0)
-
-class CustomCallback(tf.keras.callbacks.Callback):
-    def __init__(self, model, model_path, save_epochs):
-        super(CustomCallback, self).__init__()
-        self.model = model
-        self.model_path = model_path
-        self.save_epochs = save_epochs
-
-    def on_epoch_begin(self, epoch, logs=None):
-        self.epoch = epoch
-
-    def on_train_batch_end(self, batch, logs=None):
-        lr = float(tf.keras.backend.get_value(self.model.optimizer.learning_rate))
-        keys = list(logs.keys())
-        acc_key = [key for key in keys if 'accuracy' in key and 'val' not in key][-1]
-        stat_str = '[Train] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(self.epoch, lr, logs['loss'], logs[acc_key])
-        open(os.path.join(self.model_path, 'training_stats.txt'), 'a+').write(stat_str + '\n')
-        print(stat_str)
-
-    def on_test_batch_end(self, batch, logs=None):
-        lr = float(tf.keras.backend.get_value(self.model.optimizer.learning_rate))
-        keys = list(logs.keys())
-        acc_key = [key for key in keys if 'accuracy' in key][-1]
-        stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(self.epoch, lr, logs['loss'], logs[acc_key])
-        open(os.path.join(self.model_path, 'training_stats.txt'), 'a+').write(stat_str + '\n')
-        print(stat_str)
-
-    def on_epoch_end(self, epoch, logs=None):
-        if epoch % self.save_epochs == self.save_epochs-1:
-            self.model.save_weights(os.path.join(self.model_path, 'checkpoint_epoch_{}.hdf5'.format(epoch)))
+# def main_tf(args):
+#
+#     #### set up parameters
+#     num_categories = 388 # 388
+#     batch_size = 32
+#     lr = 1e-3
+#     total_epochs = 300
+#     save_epochs = 300
+#     input_size = (100, 100, 3)
+#
+#     random.seed(args.trial) # seed fixed
+#     args.category_orders = [i for i in range(num_categories)]
+#     random.shuffle(args.category_orders) # to determine the number of transformed categories
+#
+#     ####################################################################################################################
+#     #### dataset
+#     ####################################################################################################################
+#     def parse_df(filenames, labels):
+#         file_paths = [os.path.join(args.data_path, filename) for filename in filenames]
+#         classes = list(sorted(set(labels)))
+#         class_to_idx = {classes[i]:i for i in range(0, len(classes))}
+#         targets = [int(class_to_idx[label]) for label in labels]
+#         return file_paths, targets, classes, class_to_idx
+#
+#     def load_dataset(file_paths, targets):
+#         raw = tf.io.read_file(file_paths)
+#         # img = tf.io.decode_jpeg(raw, channels=1) # grayscale
+#         img = tf.io.decode_jpeg(raw, channels=3) # rgb
+#         img = tf.image.convert_image_dtype(img, tf.float32) # [0, 255] int to [0, 1] float32
+#         img = tf.image.resize(img, [input_size[0], input_size[1]])
+#         return img, targets
+#
+#     train_preprocessing = tf.keras.Sequential([
+#         # tf.keras.layers.experimental.preprocessing.Resizing(input_size[0], input_size[1]),
+#         # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255),
+#         # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 127.5, offset=-1),
+#         # tf.keras.layers.experimental.preprocessing.RandomFlip("horizontal"),
+#         # tf.keras.layers.experimental.preprocessing.RandomRotation(0.2),
+#     ])
+#     val_preprocessing = tf.keras.Sequential([
+#         # tf.keras.layers.experimental.preprocessing.Resizing(input_size[0], input_size[1]),
+#         # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255),
+#         # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 127.5, offset=-1),
+#     ])
+#
+#     AUTOTUNE = tf.data.experimental.AUTOTUNE
+#
+#     train_df = pandas.read_csv(os.path.join(args.csv_path, 'train.csv'))
+#     file_paths, targets, _, _ = parse_df(train_df['filename'].values, train_df['label'].values)
+#     train_dataset = tf.data.Dataset.from_tensor_slices((file_paths, numpy.eye(numpy.max(targets) + 1)[targets]))
+#     train_dataset = train_dataset.shuffle(buffer_size=len(train_df)).map(load_dataset).map(lambda x, y: (train_preprocessing(x), y), num_parallel_calls=AUTOTUNE)
+#     if args.transformation_type != 'none': # image transformations
+#         train_dataset = train_dataset.map(lambda x, y: transformations_tf(x, y, args), num_parallel_calls=AUTOTUNE)
+#     train_dataset = train_dataset.batch(batch_size).prefetch(buffer_size=AUTOTUNE)
+#
+#     val_df = pandas.read_csv(os.path.join(args.csv_path, 'val.csv'))
+#     file_paths, targets, classes, class_to_idx = parse_df(val_df['filename'].values, val_df['label'].values)
+#     val_dataset = tf.data.Dataset.from_tensor_slices((file_paths, numpy.eye(numpy.max(targets) + 1)[targets]))
+#     val_dataset = val_dataset.map(load_dataset).map(lambda x, y: (val_preprocessing(x), y), num_parallel_calls=AUTOTUNE)
+#     if args.transformation_type != 'none': # image transformations
+#         val_dataset = val_dataset.map(lambda x, y: transformations_tf(x, y, args), num_parallel_calls=AUTOTUNE)
+#     val_dataset = val_dataset.batch(batch_size).prefetch(buffer_size=AUTOTUNE)
+#
+#     # for inp, targ in train_dataset.take(4): # visualize
+#     #     fig, axes = plt.subplots(2,2)
+#     #     for i, ax in enumerate(axes.flat):
+#     #         ax.imshow(inp.numpy()[i,:,:,:])
+#     #         ax.set_title(targ.numpy()[i])
+#     #     plt.show()
+#
+#     ####################################################################################################################
+#     #### model
+#     ####################################################################################################################
+#
+#     #### gpus?
+#     if args.is_slurm == False:
+#         args.num_gpus = 0
+#     elif args.is_slurm == True:
+#         physical_devices = tf.config.list_physical_devices('GPU')
+#         args.num_gpus = len(physical_devices)
+#
+#     if args.num_gpus == 0:
+#         devices = "/cpu:0"
+#     elif args.num_gpus == 1:
+#         devices = "/gpu:0"
+#     elif args.num_gpus == 2:
+#         devices = ["/gpu:0", "/gpu:1"]
+#
+#     #### define model with multi-GPUs
+#     strategy = tf.distribute.MirroredStrategy(devices=devices) if args.num_gpus > 1 else tf.distribute.OneDeviceStrategy(device=devices)
+#     with strategy.scope():
+#
+#         # if args.model_name == 'vgg16':
+#         #     model = tf.keras.applications.VGG16(input_shape=input_size, include_top=True)
+#         if args.model_name == 'blnet':
+#             n_timesteps = 8
+#             input_layer = tf.keras.layers.Input(input_size)
+#             model = bl_net(input_layer, classes=num_categories, n_timesteps=n_timesteps, cumulative_readout=False)
+#         elif args.model_name == 'convlstm3':
+#             num_timesteps = 10
+#             model = ConvLSTM3(input_size=input_size, num_classes=num_categories, num_timesteps=num_timesteps)
+#             _ = model(tf.zeros((1,) + input_size))
+#
+#         load_path = os.path.join(args.model_path, 'checkpoint.hdf5')
+#         if os.path.isfile(load_path):
+#             model.load_weights(load_path)
+#             with open(os.path.join(args.model_path, 'training_stats.txt'), 'r') as stat_file:
+#                 last_line = stat_file.readlines()[-1]
+#                 start_epoch = int(re.findall(r'Epoch \((\d)\)', last_line)[0]) + 1
+#         else:
+#             start_epoch = 0
+#
+#         model.summary()
+#         model.compile(optimizer=tf.keras.optimizers.SGD(lr=lr, decay=1e-4, momentum=0.9), loss='categorical_crossentropy', metrics=['accuracy'])
+#
+#     ####################################################################################################################
+#     #### train and val
+#     ####################################################################################################################
+#     callbacks = [
+#         # tf.keras.callbacks.TensorBoard(log_dir=os.path.join(args.model_path, 'graph'), histogram_freq=0, write_graph=True, write_images=False),
+#         # tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join(args.model_path, "checkpoint_epoch_{epoch}"), save_weights_only=True, save_freq='epoch', period=save_epochs),
+#         tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join(args.model_path, 'checkpoint.hdf5'), save_weights_only=True, save_freq='epoch'),
+#         CustomCallback(model, args.model_path, save_epochs)
+#         # tf.keras.callbacks.LearningRateScheduler(),
+#     ]
+#     history = model.fit(train_dataset, validation_data=val_dataset, epochs=total_epochs, initial_epoch=start_epoch, callbacks=callbacks, verbose=0)
+#
+# class CustomCallback(tf.keras.callbacks.Callback):
+#     def __init__(self, model, model_path, save_epochs):
+#         super(CustomCallback, self).__init__()
+#         self.model = model
+#         self.model_path = model_path
+#         self.save_epochs = save_epochs
+#
+#     def on_epoch_begin(self, epoch, logs=None):
+#         self.epoch = epoch
+#
+#     def on_train_batch_end(self, batch, logs=None):
+#         lr = float(tf.keras.backend.get_value(self.model.optimizer.learning_rate))
+#         keys = list(logs.keys())
+#         acc_key = [key for key in keys if 'accuracy' in key and 'val' not in key][-1]
+#         stat_str = '[Train] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(self.epoch, lr, logs['loss'], logs[acc_key])
+#         open(os.path.join(self.model_path, 'training_stats.txt'), 'a+').write(stat_str + '\n')
+#         print(stat_str)
+#
+#     def on_test_batch_end(self, batch, logs=None):
+#         lr = float(tf.keras.backend.get_value(self.model.optimizer.learning_rate))
+#         keys = list(logs.keys())
+#         acc_key = [key for key in keys if 'accuracy' in key][-1]
+#         stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(self.epoch, lr, logs['loss'], logs[acc_key])
+#         open(os.path.join(self.model_path, 'training_stats.txt'), 'a+').write(stat_str + '\n')
+#         print(stat_str)
+#
+#     def on_epoch_end(self, epoch, logs=None):
+#         if epoch % self.save_epochs == self.save_epochs-1:
+#             self.model.save_weights(os.path.join(self.model_path, 'checkpoint_epoch_{}.hdf5'.format(epoch)))
 
 if __name__ == '__main__':
     args = parse_args()
@@ -423,91 +423,91 @@ if __name__ == '__main__':
     #### slurm or local
     if args.is_slurm == True:
         args.model_format = [
-            'alexnet_scale_continuous_1-0.1_1_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_50_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_100_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_150_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_200_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_250_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_300_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_350_1_discrete_0',
-            'alexnet_scale_continuous_1-0.1_388_1_discrete_0',
-
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_50_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_150_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_250_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_350_1_discrete_0',
-            'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            'alexnet_scale_discrete_1-0.6_1_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_50_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_100_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_150_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_200_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_250_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_300_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_350_1_discrete_0',
-            'alexnet_scale_discrete_1-0.6_388_1_discrete_0',
-
-            'alexnet_scale_continuous_1-0.1_1_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_50_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_100_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_150_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_200_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_250_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_300_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_350_1_continuous_0-1',
-            'alexnet_scale_continuous_1-0.1_388_1_continuous_0-1',
-
-            # 'alexnet_rotate_continuous_0-360_1_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_50_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_100_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_150_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_200_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_250_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_300_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_350_1_discrete_0',
-            # 'alexnet_rotate_continuous_0-360_388_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_1_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_50_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_100_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_150_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_200_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_250_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_300_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_350_1_discrete_0',
+            # 'alexnet_scale_continuous_1-0.1_388_1_discrete_0',
             #
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_50_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_150_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_250_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_350_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_50_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_150_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_250_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_350_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
             #
-            # 'alexnet_rotate_discrete_0-90_1_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_50_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_100_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_150_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_200_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_250_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_300_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_350_1_discrete_0',
-            # 'alexnet_rotate_discrete_0-90_388_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_1_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_50_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_100_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_150_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_200_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_250_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_300_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_350_1_discrete_0',
+            # 'alexnet_scale_discrete_1-0.6_388_1_discrete_0',
             #
-            # 'alexnet_rotate_continuous_0-360_1_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_50_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_100_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_150_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_200_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_250_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_300_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_350_1_continuous_0-1',
-            # 'alexnet_rotate_continuous_0-360_388_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_1_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_50_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_100_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_150_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_200_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_250_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_300_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_350_1_continuous_0-1',
+            # 'alexnet_scale_continuous_1-0.1_388_1_continuous_0-1',
+
+            'alexnet_rotate_continuous_0-360_1_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_50_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_100_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_150_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_200_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_250_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_300_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_350_1_discrete_0',
+            'alexnet_rotate_continuous_0-360_388_1_discrete_0',
+
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_50_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_150_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_250_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_350_1_discrete_0',
+            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
+
+            'alexnet_rotate_discrete_0-90_1_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_50_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_100_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_150_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_200_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_250_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_300_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_350_1_discrete_0',
+            'alexnet_rotate_discrete_0-90_388_1_discrete_0',
+
+            'alexnet_rotate_continuous_0-360_1_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_50_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_100_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_150_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_200_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_250_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_300_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_350_1_continuous_0-1',
+            'alexnet_rotate_continuous_0-360_388_1_continuous_0-1',
         ][args.id-1]
         args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
         args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
     elif args.is_slurm == False:
-        args.model_format = 'alexnet_rotate_continuous_0-145_388_1_continuous_0-0.5'
+        args.model_format = 'alexnet_rotate_discrete_0-90_200_1_discrete_0'
         args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/data/'
         args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/csv/'
@@ -524,11 +524,11 @@ if __name__ == '__main__':
         args.background_colors = list(map(float, params[7].split('-')))
 
     #### create model folder & write slurm id
+    os.makedirs(args.model_path, exist_ok=True)
     if args.is_slurm == True:
-        os.makedirs(args.model_path, exist_ok=True)
         open(os.path.join(args.model_path, 'slurm_id.txt'), 'a+').write(str(args.job) + '_' + str(args.id) + '\n')
 
     if args.model_name in ['alexnet', 'vgg19', 'resnet50', 'cornets']:
         main_torch(args)
-    elif args.model_name in ['blnet', 'convlstm']:
-        main_tf(args)
+    # elif args.model_name in ['blnet', 'convlstm']:
+    #     main_tf(args)
