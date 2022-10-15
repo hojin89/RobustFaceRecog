@@ -6,6 +6,76 @@ import matplotlib.pyplot as plt
 import random
 from numpy.random import choice
 
+####################
+#### tensorflow ####
+####################
+import tensorflow as tf
+import tensorflow_addons as tfa
+tf.data.experimental.enable_debug_mode()
+
+def transformations_tf(image, target, args):
+    # import pydevd; pydevd.settrace(suspend=False)
+
+    if tf.reduce_any(tf.equal(target, args.category_orders[:args.num_categories_transformed])):
+
+        if args.transformation_type == 'blur':
+            if args.transformation_sampling == 'discrete':
+                sigma = choice(args.transformation_levels, 1)[0]
+            elif args.transformation_sampling == 'continuous':
+                sigma = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
+            kernel_size = 2 * math.ceil(2.0 * sigma) + 1
+
+            if sigma != 0:
+                image = tfa.image.gaussian_filter2d(image, filter_shape=(kernel_size, kernel_size), sigma=(sigma, sigma))
+
+        elif args.transformation_type == 'scale':
+            if args.transformation_sampling == 'discrete':
+                scale_ratio = choice(args.transformation_levels, 1)[0]
+            elif args.transformation_sampling == 'continuous':
+                scale_ratio = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
+            original_size = tf.cast(tf.shape(image)[0], tf.float32) # assume inputs are square
+            scale_size = tf.round(original_size * scale_ratio)
+
+            if args.background_sampling == 'discrete':
+                background_color = choice(args.background_colors, 1)[0]
+            elif args.background_sampling == 'continuous':
+                background_color = random.uniform(min(args.background_colors), max(args.background_colors))
+            background_color = tf.constant(background_color, tf.float32)
+
+            if scale_ratio != 1.:
+                resized = tf.image.resize(image, size=(scale_size, scale_size), method=tf.image.ResizeMethod.BILINEAR)
+                paddings = [tf.floor((original_size-scale_size)/2.), tf.math.ceil((original_size-scale_size)/2.)]
+                image = tf.pad(resized, [paddings, paddings, [0,0]], 'CONSTANT', constant_values=background_color)
+
+        elif args.transformation_type == 'quantization':
+            if args.transformation_sampling == 'discrete':
+                scale_ratio = choice(args.transformation_levels, 1)[0]
+            elif args.transformation_sampling == 'continuous':
+                scale_ratio = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
+            original_size = tf.cast(tf.shape(image)[0], tf.float64) # assume inputs are square
+            scale_size = original_size * scale_ratio
+
+            if scale_ratio != 1.:
+                image = tf.image.resize(image, size=(scale_size, scale_size), method=tf.image.ResizeMethod.BILINEAR)
+                image = tf.image.resize(image, size=(original_size, original_size), method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+
+        elif args.transformation_type == 'rotate':
+            if args.transformation_sampling == 'discrete':
+                degree = choice(args.transformation_levels, 1)[0]
+            elif args.transformation_sampling == 'continuous':
+                degree = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
+
+            if args.background_sampling == 'discrete':
+                background_color = choice(args.background_colors, 1)[0]
+            elif args.background_sampling == 'continuous':
+                background_color = random.uniform(min(args.background_colors), max(args.background_colors))
+            background_color = tf.constant(background_color, tf.float32)
+
+            if degree != 0:
+                image = tfa.image.rotate(image, angles=degree * math.pi / 180, interpolation='BILINEAR', fill_mode='constant', fill_value=background_color)
+
+    return image, target
+
 #################
 #### pytorch ####
 #################
@@ -122,73 +192,3 @@ def pad_circular(x, target_size): # assume inputs are square and the input dimen
     x = torch.cat([x] * num_tiles, dim=2)
     x = torchvision.transforms.functional.center_crop(x, target_size)
     return x
-
-####################
-#### tensorflow ####
-####################
-import tensorflow as tf
-# import tensorflow_addons as tfa
-tf.data.experimental.enable_debug_mode()
-
-def transformations_tf(image, target, args):
-    # import pydevd; pydevd.settrace(suspend=False)
-
-    if tf.reduce_any(tf.equal(target, args.category_orders[:args.num_categories_transformed])):
-
-        if args.transformation_type == 'blur':
-            if args.transformation_sampling == 'discrete':
-                sigma = choice(args.transformation_levels, 1)[0]
-            elif args.transformation_sampling == 'continuous':
-                sigma = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
-            kernel_size = 2 * math.ceil(2.0 * sigma) + 1
-
-            if sigma != 0:
-                image = tfa.image.gaussian_filter2d(image, filter_shape=(kernel_size, kernel_size), sigma=(sigma, sigma))
-
-        elif args.transformation_type == 'scale':
-            if args.transformation_sampling == 'discrete':
-                scale_ratio = choice(args.transformation_levels, 1)[0]
-            elif args.transformation_sampling == 'continuous':
-                scale_ratio = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
-            original_size = tf.cast(tf.shape(image)[0], tf.float32) # assume inputs are square
-            scale_size = tf.round(original_size * scale_ratio)
-
-            if args.background_sampling == 'discrete':
-                background_color = choice(args.background_colors, 1)[0]
-            elif args.background_sampling == 'continuous':
-                background_color = random.uniform(min(args.background_colors), max(args.background_colors))
-            background_color = tf.constant(background_color, tf.float32)
-
-            if scale_ratio != 1.:
-                resized = tf.image.resize(image, size=(scale_size, scale_size), method=tf.image.ResizeMethod.BILINEAR)
-                paddings = [tf.floor((original_size-scale_size)/2.), tf.math.ceil((original_size-scale_size)/2.)]
-                image = tf.pad(resized, [paddings, paddings, [0,0]], 'CONSTANT', constant_values=background_color)
-
-        elif args.transformation_type == 'quantization':
-            if args.transformation_sampling == 'discrete':
-                scale_ratio = choice(args.transformation_levels, 1)[0]
-            elif args.transformation_sampling == 'continuous':
-                scale_ratio = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
-            original_size = tf.cast(tf.shape(image)[0], tf.float64) # assume inputs are square
-            scale_size = original_size * scale_ratio
-
-            if scale_ratio != 1.:
-                image = tf.image.resize(image, size=(scale_size, scale_size), method=tf.image.ResizeMethod.BILINEAR)
-                image = tf.image.resize(image, size=(original_size, original_size), method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-
-        elif args.transformation_type == 'rotate':
-            if args.transformation_sampling == 'discrete':
-                degree = choice(args.transformation_levels, 1)[0]
-            elif args.transformation_sampling == 'continuous':
-                degree = random.uniform(min(args.transformation_levels), max(args.transformation_levels))
-
-            if args.background_sampling == 'discrete':
-                background_color = choice(args.background_colors, 1)[0]
-            elif args.background_sampling == 'continuous':
-                background_color = random.uniform(min(args.background_colors), max(args.background_colors))
-            background_color = tf.constant(background_color, tf.float32)
-
-            if degree != 0:
-                image = tfa.image.rotate(image, angles=degree * math.pi / 180, interpolation='BILINEAR', fill_mode='constant', fill_value=background_color)
-
-    return image, target
