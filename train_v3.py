@@ -2,8 +2,9 @@
 #### version 3 ####
 ###################
 # the number of transformed categories can vary from 1 to 388,
-# three types of transformations are tested: blur, scale, quantization, rotate
-# to check the impact of background colors
+# three types of transformations are tested: blur, rotate, scale
+# to check the impact of background colors (v1-v4)
+# to further check the applicability of multiple transformation-level training
 
 import os
 import sys
@@ -25,7 +26,7 @@ import tensorflow as tf
 tf.config.run_functions_eagerly(True)
 
 from utils import *
-from transformations import *
+from transformations_original import *
 
 from models.alexnet import alexnet
 from models.vgg import vgg19
@@ -463,45 +464,55 @@ if __name__ == '__main__':
             # 'alexnet_scale_continuous_1-0.1_350_1_continuous_0-1',
             # 'alexnet_scale_continuous_1-0.1_388_1_continuous_0-1',
 
-            'alexnet_rotate_continuous_0-360_1_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_50_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_100_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_150_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_200_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_250_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_300_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_350_1_discrete_0',
-            'alexnet_rotate_continuous_0-360_388_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_1_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_50_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_100_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_150_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_200_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_250_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_300_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_350_1_discrete_0',
+            # 'alexnet_rotate_continuous_0-360_388_1_discrete_0',
+            #
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_50_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_150_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_250_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_350_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
+            #
+            # 'alexnet_rotate_discrete_0-90_1_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_50_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_100_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_150_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_200_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_250_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_300_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_350_1_discrete_0',
+            # 'alexnet_rotate_discrete_0-90_388_1_discrete_0',
+            #
+            # 'alexnet_rotate_continuous_0-360_1_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_50_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_100_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_150_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_200_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_250_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_300_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_350_1_continuous_0-1',
+            # 'alexnet_rotate_continuous_0-360_388_1_continuous_0-1',
 
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_50_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_150_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_250_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_350_1_discrete_0',
-            'alexnet_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-
-            'alexnet_rotate_discrete_0-90_1_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_50_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_100_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_150_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_200_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_250_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_300_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_350_1_discrete_0',
-            'alexnet_rotate_discrete_0-90_388_1_discrete_0',
-
-            'alexnet_rotate_continuous_0-360_1_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_50_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_100_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_150_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_200_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_250_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_300_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_350_1_continuous_0-1',
-            'alexnet_rotate_continuous_0-360_388_1_continuous_0-1',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_50_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_150_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_250_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_350_1_discrete_0',
+            'alexnet_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
         ][args.id-1]
         args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'

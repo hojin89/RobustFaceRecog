@@ -1,10 +1,3 @@
-###################
-#### version 4 ####
-###################
-# the number of transformed categories can vary from 1 to 388,
-# three types of transformations are tested: blur, scale, quantization, rotate
-# feedforward vs. recurrent
-
 import os
 import sys
 import re
@@ -14,6 +7,7 @@ import random
 import collections
 import matplotlib.pyplot as plt
 import itertools
+import pickle
 from copy import copy
 
 import tensorflow as tf
@@ -102,13 +96,13 @@ def main_tf(args):
         img = tf.image.resize(img, [input_size[0], input_size[1]])
         return img, targets
 
-    train_preprocessing = tf.keras.Sequential([
-        # tf.keras.layers.experimental.preprocessing.Resizing(input_size[0], input_size[1]),
-        # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255),
-        # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 127.5, offset=-1),
-        # tf.keras.layers.experimental.preprocessing.RandomFlip("horizontal"),
-        # tf.keras.layers.experimental.preprocessing.RandomRotation(0.2),
-    ])
+    # train_preprocessing = tf.keras.Sequential([
+    #     # tf.keras.layers.experimental.preprocessing.Resizing(input_size[0], input_size[1]),
+    #     # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255),
+    #     # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 127.5, offset=-1),
+    #     # tf.keras.layers.experimental.preprocessing.RandomFlip("horizontal"),
+    #     # tf.keras.layers.experimental.preprocessing.RandomRotation(0.2),
+    # ])
     val_preprocessing = tf.keras.Sequential([
         # tf.keras.layers.experimental.preprocessing.Resizing(input_size[0], input_size[1]),
         # tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255),
@@ -117,18 +111,18 @@ def main_tf(args):
 
     AUTOTUNE = tf.data.experimental.AUTOTUNE
 
-    train_df = pandas.read_csv(os.path.join(args.csv_path, 'train.csv'))
-    file_paths, targets, _, _ = parse_df(train_df['filename'].values, train_df['label'].values)
-    # train_dataset = tf.data.Dataset.from_tensor_slices((file_paths, numpy.eye(numpy.max(targets) + 1)[targets])) # categorical crossentropy
-    train_dataset = tf.data.Dataset.from_tensor_slices((file_paths, targets)) # sparse categorical crossentropy
-    train_dataset = train_dataset.shuffle(buffer_size=len(train_df)).map(load_dataset).map(lambda x, y: (train_preprocessing(x), y), num_parallel_calls=AUTOTUNE)
-    train_dataset = train_dataset.map(lambda x, y: transformations_tf(x, y, True, args), num_parallel_calls=AUTOTUNE).batch(batch_size).prefetch(buffer_size=AUTOTUNE)
+    # train_df = pandas.read_csv(os.path.join(args.csv_path, 'train.csv'))
+    # file_paths, targets, _, _ = parse_df(train_df['filename'].values, train_df['label'].values)
+    # # train_dataset = tf.data.Dataset.from_tensor_slices((file_paths, numpy.eye(numpy.max(targets) + 1)[targets])) # categorical crossentropy
+    # train_dataset = tf.data.Dataset.from_tensor_slices((file_paths, targets)) # sparse categorical crossentropy
+    # train_dataset = train_dataset.shuffle(buffer_size=len(train_df)).map(load_dataset).map(lambda x, y: (train_preprocessing(x), y), num_parallel_calls=AUTOTUNE)
+    # train_dataset = train_dataset.map(lambda x, y: transformations_tf(x, y, False, args), num_parallel_calls=AUTOTUNE).batch(batch_size).prefetch(buffer_size=AUTOTUNE)
 
     val_df = pandas.read_csv(os.path.join(args.csv_path, 'val.csv'))
     file_paths, targets, classes, class_to_idx = parse_df(val_df['filename'].values, val_df['label'].values)
     val_dataset = tf.data.Dataset.from_tensor_slices((file_paths, targets))
     val_dataset = val_dataset.map(load_dataset).map(lambda x, y: (val_preprocessing(x), y), num_parallel_calls=AUTOTUNE)
-    val_dataset = val_dataset.map(lambda x, y: transformations_tf(x, y, True, args), num_parallel_calls=AUTOTUNE).batch(batch_size).prefetch(buffer_size=AUTOTUNE)
+    # val_dataset = val_dataset.map(lambda x, y: transformations_tf(x, y, False, args), num_parallel_calls=AUTOTUNE).batch(batch_size).prefetch(buffer_size=AUTOTUNE)
 
     # for inp, targ in train_dataset.take(4): # visualize
     #     fig, axes = plt.subplots(2,2)
@@ -162,10 +156,10 @@ def main_tf(args):
                 per_example_loss = loss_func(labels, outputs)
             return tf.nn.compute_average_loss(per_example_loss, global_batch_size=batch_size)
 
-        train_loss_func = tf.keras.metrics.Mean(name='train_loss')
-        train_accuracy_func = tf.keras.metrics.SparseCategoricalAccuracy(name='train_accuracy')
         val_loss_func = tf.keras.metrics.Mean(name='val_loss')
         val_accuracy_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy')
+        val_accuracy_within_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy_within')
+        val_accuracy_across_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy_across')
 
         #### define model
         # if args.model_name == 'vgg16':
@@ -187,7 +181,8 @@ def main_tf(args):
             _ = model(tf.zeros((1,) + input_size))
         model.summary()
 
-        load_path = os.path.join(args.model_path, 'checkpoint.hdf5')
+        # load_path = os.path.join(args.model_path, 'checkpoint.hdf5')
+        load_path = os.path.join(args.model_path, 'checkpoint_epoch_299.hdf5')
         if os.path.isfile(load_path):
             model.load_weights(load_path)
             with open(os.path.join(args.model_path, 'training_stats.txt'), 'r') as stat_file:
@@ -198,81 +193,97 @@ def main_tf(args):
             start_epoch = 0
 
     ####################################################################################################################
-    #### train and val
+    #### val
     ####################################################################################################################
-    def train(inputs):
-        images, labels = inputs
-
-        with tf.GradientTape() as tape:
-            outputs = model(images, training=True)
-            loss = compute_loss(labels, outputs)
-
-        gradients = tape.gradient(loss, model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-
-        train_loss_func.update_state(loss)
-        train_accuracy_func.update_state(labels, outputs)
-        return loss
-
     def val(inputs):
         images, labels = inputs
 
         outputs = model(images, training=False)
         loss = compute_loss(labels, outputs)
+        if args.model_name == 'blnet-3' or args.model_name == 'blnet-5':
+            outputs = outputs[-1]
+        predict = tf.argmax(outputs, 1, output_type=tf.dtypes.int32)
+        correct = tf.equal(labels, predict)
+
+        #### within-category accuracy & across-category accruacy
+        indices_transformed, indices_nontransformed = [], []
+        def cond(i):
+            return tf.less(i, len(labels))
+        def body(i):
+            if tf.reduce_any(tf.equal(labels[i], args.category_orders[:args.num_categories_transformed])):
+                indices_transformed.append(i)
+            else:
+                indices_nontransformed.append(i)
+            return (tf.add(i, 1), )
+        tf.while_loop(cond, body, [tf.constant(0)])
+        indices_transformed, indices_nontransformed = tf.stack(indices_transformed), tf.stack(indices_nontransformed)
 
         val_loss_func.update_state(loss)
         val_accuracy_func.update_state(labels, outputs)
-        return loss
+        if tf.greater(tf.size(indices_transformed), 0):
+            val_accuracy_within_func.update_state(tf.gather(labels, indices_transformed), tf.gather(outputs, indices_transformed))
+        if tf.greater(tf.size(indices_nontransformed), 0):
+            val_accuracy_across_func.update_state(tf.gather(labels, indices_nontransformed), tf.gather(outputs, indices_nontransformed))
 
-    @tf.function
-    def distributed_train(dataset_inputs):
-        per_replica_losses = strategy.run(train, args=(dataset_inputs,))
-        return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
+        return loss, correct, predict
 
     @tf.function
     def distributed_val(dataset_inputs):
         return strategy.run(val, args=(dataset_inputs,))
 
     #### run
-    for epoch in range(start_epoch, total_epochs):
+    epoch = start_epoch
+    path, target = file_paths, targets
+    params = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4] # blur
 
-        #### train
-        progess_bar = tf.keras.utils.Progbar(len(train_dataset))
-        loss, num_batches = 0.0, 0
-        for x in train_dataset:
-            loss += distributed_train(x)
-            num_batches += 1
-            # progess_bar.update(num_batches)
-        train_loss = loss / num_batches
+    accuracy1, correct1, accuracy1_within, accuracy1_across, predict = \
+        numpy.zeros((len(params))), numpy.zeros((len(params), len(path))), \
+        numpy.zeros((len(params))), numpy.zeros((len(params))), numpy.zeros((len(params), len(path)))
 
-        stat_str = '[Train] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(epoch, lr, train_loss, train_accuracy_func.result())
-        open(os.path.join(args.model_path, 'training_stats.txt'), 'a+').write(stat_str + '\n')
-        print(stat_str)
-        sys.stdout.flush()
+    for i, param in enumerate(params):
+
+        #### transformation - important!
+        args.transformation_type = 'blur'
+        args.transformation_sampling = 'discrete'
+        args.transformation_levels = [param]
+        args.is_transformed = [True if t in args.category_orders[:args.num_categories_transformed] else False for t in targets]
+        args.background_sampling = 'discrete'
+        args.background_colors = [0.]
+
+        val_dataset_transformed = val_dataset.map(lambda x, y: transformations_tf(x, y, False, args), num_parallel_calls=AUTOTUNE).batch(batch_size).prefetch(buffer_size=AUTOTUNE)
 
         #### val
-        progess_bar = tf.keras.utils.Progbar(len(val_dataset))
+        progess_bar = tf.keras.utils.Progbar(len(val_dataset_transformed))
         loss, num_batches = 0.0, 0
-        for x in val_dataset:
-            loss += distributed_val(x)
+        correct_list, predict_list = [], []
+        for x in val_dataset_transformed:
+            loss_, correct_, predict_ = distributed_val(x)
+            loss += loss_
+            correct_list.append(correct_)
+            predict_list.append(predict_)
             num_batches += 1
             # progess_bar.update(num_batches)
         val_loss = loss / num_batches
 
-        stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(epoch, lr, val_loss, val_accuracy_func.result())
-        open(os.path.join(args.model_path, 'training_stats.txt'), 'a+').write(stat_str + '\n')
+        # stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(epoch, lr, val_loss, val_accuracy_func.result())
+        stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1-Within ({:.4f}) Accuracy1-Across ({:.4f})'.format(epoch, lr, val_loss, val_accuracy_within_func.result(), val_accuracy_across_func.result())
         print(stat_str)
         sys.stdout.flush()
 
-        #### save
-        model.save_weights(os.path.join(args.model_path, 'checkpoint.hdf5'))
-        if epoch % save_epochs == save_epochs-1:
-            model.save_weights(os.path.join(args.model_path, 'checkpoint_epoch_{}.hdf5'.format(epoch)))
+        accuracy1[i] = val_accuracy_func.result()
+        correct1[i,:] = tf.concat(correct_list, axis=0)
+        accuracy1_within[i] = val_accuracy_within_func.result()
+        accuracy1_across[i] = val_accuracy_across_func.result()
+        predict[i,:] = tf.concat(predict_list, axis=0)
 
-        train_loss_func.reset_states()
-        train_accuracy_func.reset_states()
         val_loss_func.reset_states()
         val_accuracy_func.reset_states()
+        val_accuracy_within_func.reset_states()
+        val_accuracy_across_func.reset_states()
+
+    data = {'path':path, 'target':target, 'params':params, 'is_transformed':args.is_transformed, 'accuracy1':accuracy1, 'correct1':correct1, 'accuracy1_within':accuracy1_within, 'accuracy1_across':accuracy1_across, 'predict':predict}
+    with open(os.path.join(args.model_path, 'analysis_v4_accuracy_by_blur.pickle'), 'wb') as f:
+        pickle.dump(data, f)
 
 #################
 #### pytorch ####
@@ -294,16 +305,16 @@ def main_torch(args):
     ####################################################################################################################
     #### dataset
     ####################################################################################################################
-    train_dataset = CustomDataset(
-        args.data_path,
-        os.path.join(args.csv_path, 'train.csv'),
-        transforms.Compose([
-            # transforms.RandomAffine(degrees=15, translate=(0.1, 0.1)),
-            transforms.Resize(input_size[1]),
-            # transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-        ]),
-    )
+    # train_dataset = CustomDataset(
+    #     args.data_path,
+    #     os.path.join(args.csv_path, 'train.csv'),
+    #     transforms.Compose([
+    #         # transforms.RandomAffine(degrees=15, translate=(0.1, 0.1)),
+    #         transforms.Resize(input_size[1]),
+    #         # transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #     ]),
+    # )
     val_dataset = CustomDataset(
         args.data_path,
         os.path.join(args.csv_path, 'val.csv'),
@@ -313,7 +324,7 @@ def main_torch(args):
         ]),
     )
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+    # train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
 
     ####################################################################################################################
@@ -366,7 +377,8 @@ def main_torch(args):
     loss_function = torch.nn.CrossEntropyLoss().cuda()
 
     #### resume
-    load_path = os.path.join(args.model_path, 'checkpoint.pth.tar')
+    # load_path = os.path.join(args.model_path, 'checkpoint.pth.tar')
+    load_path = os.path.join(args.model_path, 'checkpoint_epoch_299.pth.tar')
     if os.path.isfile(load_path):
         print("... Loading checkpoint '{}'".format(load_path))
         checkpoint = torch.load(load_path, map_location=device)
@@ -391,36 +403,56 @@ def main_torch(args):
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[], gamma=0.1, last_epoch=-1)
 
     ####################################################################################################################
-    #### train and val
+    #### val
     ####################################################################################################################
-    for epoch in range(start_epoch, total_epochs):
+    epoch = start_epoch
+    path, target = zip(*val_loader.dataset.samples)
+    params = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4] # blur
 
-        #### adjust learning rate
-        if epoch < total_epochs:
-            lr_scheduler.step()
+    accuracy1, correct1, accuracy1_within, accuracy1_across, predict = \
+        numpy.zeros((len(params))), numpy.zeros((len(params), len(path))), \
+        numpy.zeros((len(params))), numpy.zeros((len(params))), numpy.zeros((len(params), len(path)))
 
-        stat_file = open(os.path.join(args.model_path, 'training_stats.txt'), 'a+')
-        # print("Start epoch at '{}'".format(epoch)); sys.stdout.flush()
+    print("Start epoch at '{}'".format(epoch))
+    stat_file = ''
 
-        train(train_loader, model, loss_function, optimizer, epoch, stat_file, args)
-        val(val_loader, model, loss_function, optimizer, epoch, stat_file, args)
+    for i, param in enumerate(params):
 
-        torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, os.path.join(args.model_path, 'checkpoint.pth.tar'))
-        if numpy.mod(epoch, save_epochs) == save_epochs-1:
-            torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, os.path.join(args.model_path, 'checkpoint_epoch_%d.pth.tar'%(epoch)))
+        #### transformation - important!
+        args.transformation_type = 'blur'
+        args.transformation_sampling = 'discrete'
+        args.transformation_levels = [param]
+        args.is_transformed = [True if t in args.category_orders[:args.num_categories_transformed] else False for t in val_dataset.targets]
+        args.background_sampling = 'discrete'
+        args.background_colors = [0.]
 
-def train(train_loader, model, loss_function, optimizer, epoch, stat_file, args):
+        accuracy1_, correct1_, accuracy1_within_, accuracy1_across_, predict_ = \
+            val(val_loader, model, loss_function, optimizer, epoch, stat_file, args)
 
-    model.train()
+        accuracy1[i] = accuracy1_
+        correct1[i,:] = correct1_
+        accuracy1_within[i] = accuracy1_within_
+        accuracy1_across[i] = accuracy1_across_
+        predict[i,:] = predict_
+
+    data = {'path':path, 'target':target, 'params':params, 'is_transformed':args.is_transformed, 'accuracy1':accuracy1, 'correct1':correct1, 'accuracy1_within':accuracy1_within, 'accuracy1_across':accuracy1_across, 'predict':predict}
+    with open(os.path.join(args.model_path, 'analysis_v4_accuracy_by_blur.pickle'), 'wb') as f:
+        pickle.dump(data, f)
+
+def val(val_loader, model, loss_function, optimizer, epoch, stat_file, args):
+
+    model.eval()
     loss_sum, num_correct1, num_correct5, batch_size_sum = 0., 0., 0., 0. # Accuracy
+    correct1, correct5, predict = [0] * len(val_loader.dataset), [0] * len(val_loader.dataset), [0] * len(val_loader.dataset)
+    num_correct1_transformed, num_correct1_nontransformed, batch_size_sum_transformed, batch_size_sum_nontransformed = 0., 0., 0., 0.
 
-    for batch_index, (inputs, targets, _, _) in enumerate(train_loader):
+    for batch_index, (inputs, targets, paths, indices) in enumerate(val_loader):
 
         if args.num_gpus != 0:
             inputs = inputs.cuda(non_blocking=True)
             targets = targets.cuda(non_blocking=True)
 
-        inputs = transformations_torch(inputs, targets, True, args)
+        inputs = transformations_torch(inputs, targets, False, args)
 
         # for i in range(inputs.size(0)):
         #     fig, axes = plt.subplots(1,1)
@@ -431,44 +463,15 @@ def train(train_loader, model, loss_function, optimizer, epoch, stat_file, args)
         outputs = model(inputs)
         loss = loss_function(outputs, targets)
 
-        _, num_correct1_batch = is_correct(outputs, targets, topk=1)
-        _, num_correct5_batch = is_correct(outputs, targets, topk=5)
+        correct1_batch, num_correct1_batch, predict_batch = is_correct(outputs, targets, topk=1)
+        correct5_batch, num_correct5_batch, _ = is_correct(outputs, targets, topk=5)
 
-        #### accuracy
-        loss_sum += loss.item()
-        num_correct1 += num_correct1_batch.item()
-        num_correct5 += num_correct5_batch.item()
-        batch_size_sum += targets.size(0)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        stat_str = '[Train] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f}) Accuracy5 ({:.4f})'.\
-            format(epoch, optimizer.param_groups[0]['lr'], loss_sum / (batch_index + 1), num_correct1 / batch_size_sum, num_correct5 / batch_size_sum)
-        # progress_bar(batch_index, len(train_loader.dataset) / inputs.size(0), stat_str)
-
-    stat_file.write(stat_str + '\n')
-    print(stat_str); sys.stdout.flush()
-def val(val_loader, model, loss_function, optimizer, epoch, stat_file, args):
-
-    model.eval()
-    loss_sum, num_correct1, num_correct5, batch_size_sum = 0., 0., 0., 0. # Accuracy
-    correct1, correct5 = [0] * len(val_loader.dataset), [0] * len(val_loader.dataset) # Correct
-
-    for batch_index, (inputs, targets, paths, indices) in enumerate(val_loader):
-
-        if args.num_gpus != 0:
-            inputs = inputs.cuda(non_blocking=True)
-            targets = targets.cuda(non_blocking=True)
-
-        inputs = transformations_torch(inputs, targets, True, args)
-
-        outputs = model(inputs)
-        loss = loss_function(outputs, targets)
-
-        correct1_batch, num_correct1_batch = is_correct(outputs, targets, topk=1)
-        correct5_batch, num_correct5_batch = is_correct(outputs, targets, topk=5)
+        correct1_batch_transformed = correct1_batch[0, numpy.where([args.is_transformed[i] for i in indices])[0]]
+        correct1_batch_nontransformed = correct1_batch[0, numpy.where(numpy.invert([args.is_transformed[i] for i in indices]))[0]]
+        num_correct1_transformed += correct1_batch_transformed.float().sum().item()
+        num_correct1_nontransformed += correct1_batch_nontransformed.float().sum().item()
+        batch_size_sum_transformed += len(correct1_batch_transformed)
+        batch_size_sum_nontransformed += len(correct1_batch_nontransformed)
 
         #### accuracy
         loss_sum += loss.item()
@@ -479,14 +482,22 @@ def val(val_loader, model, loss_function, optimizer, epoch, stat_file, args):
         for i, index in enumerate(indices):
             #### correct
             correct1[index] = correct1_batch.view(-1)[i].item()
-            correct5[index] = torch.any(correct5_batch, dim=0).view(-1)[i].item() # top5 glitch
+            correct5[index] = torch.any(correct5_batch, dim=0).view(-1)[i].item()
 
-        stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f}) Accuracy5 ({:.4f})'.\
-            format(epoch, optimizer.param_groups[0]['lr'], loss_sum / (batch_index + 1), num_correct1 / batch_size_sum, num_correct5 / batch_size_sum)
+            #### predict
+            predict[index] = predict_batch.view(-1)[i].item()
+
+        #### accuracy within & across
+        accuracy1_within = 0. if batch_size_sum_transformed == 0. else num_correct1_transformed / batch_size_sum_transformed
+        accuracy1_across = 0. if batch_size_sum_nontransformed == 0. else num_correct1_nontransformed / batch_size_sum_nontransformed
+
+        # stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f}) Accuracy5 ({:.4f})'.\
+        #     format(epoch, optimizer.param_groups[0]['lr'], loss_sum / (batch_index + 1), num_correct1 / batch_size_sum, num_correct5 / batch_size_sum)
+        stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1-Within ({:.4f}) Accuracy1-Across ({:.4f})'. \
+            format(epoch, optimizer.param_groups[0]['lr'], loss_sum / (batch_index + 1), accuracy1_within, accuracy1_across)
         # progress_bar(batch_index, len(val_loader.dataset) / inputs.size(0), stat_str)
 
-    stat_file.write(stat_str + '\n')
-    print(stat_str); sys.stdout.flush()
+    return (num_correct1 / batch_size_sum, correct1, accuracy1_within, accuracy1_across, predict)
 
 def is_correct(output, target, topk=1):
     with torch.no_grad():
@@ -495,7 +506,7 @@ def is_correct(output, target, topk=1):
         correct = pred.eq(target.view(1, -1).expand_as(pred))
         num_correct = correct[:topk].contiguous().view(-1).float().sum(0, keepdim=True)
 
-        return correct, num_correct
+        return correct, num_correct, pred
 
 if __name__ == '__main__':
     args = parse_args()
@@ -513,7 +524,6 @@ if __name__ == '__main__':
 
     #### slurm or local
     if args.is_slurm == True:
-        #### scale
         args.model_format = [
             #### blur
             # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
@@ -521,13 +531,13 @@ if __name__ == '__main__':
             # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
             # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
             # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
+            #
             # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
             # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
             # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
             # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
             # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
+            #
             # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
             # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
             # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
@@ -539,119 +549,70 @@ if __name__ == '__main__':
             # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
             # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
             # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
+            #
             # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
             # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
             # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
             # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
             # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
+            #
             # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
             # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
             # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
             # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
             # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
+            #
             # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
             # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
             # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
             # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
             # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
 
-            #### scale
-            'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            'cornets-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
+            'cornets-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
+            'cornets-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
+            'cornets-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
+            'cornets-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
 
-            'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
+            'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
+            'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
+            'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
+            'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
 
-            'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            'convlstm3-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
+            'convlstm3-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
+            'convlstm3-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
+            'convlstm3-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
+            'convlstm3-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
 
-            'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            'cornets-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
+            'cornets-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
+            'cornets-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
+            'cornets-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
+            'cornets-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
 
-            'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            'blnet-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
+            'blnet-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
+            'blnet-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
+            'blnet-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
+            'blnet-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
 
-            'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            #### rotate
-            # 'alexnet_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'vgg19_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'cornets-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
+            'convlstm3-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
+            'convlstm3-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
+            'convlstm3-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
+            'convlstm3-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
+            'convlstm3-5_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
         ][args.id-1]
         args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
         args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
     elif args.is_slurm == False:
-        args.model_format = 'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0'
+        # args.model_format = 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0'
+        args.model_format = 'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0'
         args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
-        args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubMini/data/'
-        args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubMini/csv/'
+        args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/data/'
+        args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/csv/'
 
     params = args.model_format.split('_')
     args.model_name = params[0]
@@ -666,9 +627,9 @@ if __name__ == '__main__':
         args.background_colors = list(map(float, params[8].split('-')))
 
     #### create model folder & write slurm id
-    os.makedirs(args.model_path, exist_ok=True)
-    if args.is_slurm == True:
-        open(os.path.join(args.model_path, 'slurm_id.txt'), 'a+').write(str(args.job) + '_' + str(args.id) + '\n')
+    # os.makedirs(args.model_path, exist_ok=True)
+    # if args.is_slurm == True:
+    #     open(os.path.join(args.model_path, 'slurm_id.txt'), 'a+').write(str(args.job) + '_' + str(args.id) + '\n')
 
     if args.model_name in ['alexnet', 'vgg19', 'resnet50', 'cornets-1', 'cornets-3', 'cornets-5', 'vitb16']:
         main_torch(args)

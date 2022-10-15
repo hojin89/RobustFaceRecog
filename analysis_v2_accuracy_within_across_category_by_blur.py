@@ -15,7 +15,7 @@ import torchvision.transforms as transforms
 
 from models.alexnet import alexnet
 from utils import *
-from tranformations import *
+from transformations_original import *
 
 torch.backends.cudnn.benchmark = True
 
@@ -202,17 +202,23 @@ def is_correct(output, target, topk=1):
 if __name__ == '__main__':
     args = parse_args()
 
-    for trial in [1,2,3]:
+    for trial in [1]:
 
         #### define parameters
         args.trial = trial
-        params1 = [97, 194, 291] # number of transformed categories
-        params2 = ['blur', 'turbulence'] # transformation types
+        params1a = [97, 194, 291] # number of transformed categories
+        params1b = [1, 48, 145, 242, 339, 388]
+        params2a = ['blur', 'turbulence'] # transformation types
+        params2b = ['blur2', 'blur3'] # blur, pregenerated; blur2, on the fly & discrete; blur3, on the fly % continuous
 
         if args.id == 0:
             args.num_category_transformed, args.transformation_type = 0, 'none'
-        else:
-            args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1, params2)][args.id-1]
+        elif args.id >= 1 and args.id <= 6:
+            args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1a, params2a)][args.id-1]
+        elif args.id >= 7 and args.id <= 12:
+            args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1a, params2b)][args.id-1-6]
+        elif args.id >= 13 and args.id <= 22:
+            args.num_category_transformed, args.transformation_type = [p for p in itertools.product(params1b, params2a)][args.id-1-12]
 
         #### slurm or local
         if args.is_slurm == True:

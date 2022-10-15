@@ -20,7 +20,7 @@ import torchvision.transforms as transforms
 
 from models.alexnet import alexnet
 from utils import *
-from transformations import *
+from transformations_original import *
 
 torch.backends.cudnn.benchmark = True
 
