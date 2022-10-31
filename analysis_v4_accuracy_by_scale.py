@@ -147,19 +147,13 @@ def main_tf(args):
         optimizer = tf.keras.optimizers.SGD(lr=lr, decay=1e-4, momentum=0.9)
         loss_func = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         def compute_loss(labels, outputs):
-            if args.model_name == 'blnet-3' or args.model_name == 'blnet-5':
-                per_example_loss = 0.0
-                for output in outputs:
-                    per_example_loss += loss_func(labels, output)
-                per_example_loss = per_example_loss / len(outputs)
-            else:
-                per_example_loss = loss_func(labels, outputs)
+            per_example_loss = loss_func(labels, outputs)
             return tf.nn.compute_average_loss(per_example_loss, global_batch_size=batch_size)
 
         val_loss_func = tf.keras.metrics.Mean(name='val_loss')
         val_accuracy_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy')
-        val_accuracy_within_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy_within')
-        val_accuracy_across_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy_across')
+        # val_accuracy_within_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy_within')
+        # val_accuracy_across_func = tf.keras.metrics.SparseCategoricalAccuracy(name='val_accuracy_across')
 
         #### define model
         # if args.model_name == 'vgg16':
@@ -197,33 +191,26 @@ def main_tf(args):
     ####################################################################################################################
     def val(inputs):
         images, labels = inputs
-
         outputs = model(images, training=False)
-        loss = compute_loss(labels, outputs)
-        if args.model_name == 'blnet-3' or args.model_name == 'blnet-5':
+        if 'blnet' in args.model_name:
+            loss = 0.0
+            for output in outputs:
+                loss += compute_loss(labels, output)
             outputs = outputs[-1]
+        else:
+            loss = compute_loss(labels, outputs)
         predict = tf.argmax(outputs, 1, output_type=tf.dtypes.int32)
         correct = tf.equal(labels, predict)
 
-        #### within-category accuracy & across-category accruacy
-        indices_transformed, indices_nontransformed = [], []
-        def cond(i):
-            return tf.less(i, len(labels))
-        def body(i):
-            if tf.reduce_any(tf.equal(labels[i], args.category_orders[:args.num_categories_transformed])):
-                indices_transformed.append(i)
-            else:
-                indices_nontransformed.append(i)
-            return (tf.add(i, 1), )
-        tf.while_loop(cond, body, [tf.constant(0)])
-        indices_transformed, indices_nontransformed = tf.stack(indices_transformed), tf.stack(indices_nontransformed)
-
         val_loss_func.update_state(loss)
         val_accuracy_func.update_state(labels, outputs)
-        if tf.greater(tf.size(indices_transformed), 0):
-            val_accuracy_within_func.update_state(tf.gather(labels, indices_transformed), tf.gather(outputs, indices_transformed))
-        if tf.greater(tf.size(indices_nontransformed), 0):
-            val_accuracy_across_func.update_state(tf.gather(labels, indices_nontransformed), tf.gather(outputs, indices_nontransformed))
+
+        #### within-category accuracy & across-category accruacy
+        # indices_transformed, indices_nontransformed = find_indices_transformed(labels, args)
+        # if tf.greater(tf.size(indices_transformed), 0):
+        #     val_accuracy_within_func.update_state(tf.gather(labels, indices_transformed), tf.gather(outputs, indices_transformed))
+        # if tf.greater(tf.size(indices_nontransformed), 0):
+        #     val_accuracy_across_func.update_state(tf.gather(labels, indices_nontransformed), tf.gather(outputs, indices_nontransformed))
 
         return loss, correct, predict
 
@@ -231,7 +218,9 @@ def main_tf(args):
     def distributed_val(dataset_inputs):
         return strategy.run(val, args=(dataset_inputs,))
 
+    ####################################################################################################################
     #### run
+    ####################################################################################################################
     epoch = start_epoch
     path, target = file_paths, targets
     params = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.] # scale
@@ -254,36 +243,67 @@ def main_tf(args):
 
         #### val
         progess_bar = tf.keras.utils.Progbar(len(val_dataset_transformed))
-        loss, num_batches = 0.0, 0
-        correct_list, predict_list = [], []
+        num_batches, batch_size_sum, loss_sum, correct_epoch, predict_epoch = 0, 0, 0.0, [], []
+        num_correct_epoch_transformed, num_correct_epoch_nontransformed, batch_size_sum_transformed, batch_size_sum_nontransformed = 0, 0, 0, 0
         for x in val_dataset_transformed:
-            loss_, correct_, predict_ = distributed_val(x)
-            loss += loss_
-            correct_list.append(correct_)
-            predict_list.append(predict_)
+            loss_batch, correct_batch, predict_batch = distributed_val(x)
             num_batches += 1
+            batch_size_sum += len(x[1])
+            loss_sum += loss_batch
+            correct_epoch.append(correct_batch)
+            predict_epoch.append(predict_batch)
             # progess_bar.update(num_batches)
-        val_loss = loss / num_batches
 
-        # stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(epoch, lr, val_loss, val_accuracy_func.result())
-        stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1-Within ({:.4f}) Accuracy1-Across ({:.4f})'.format(epoch, lr, val_loss, val_accuracy_within_func.result(), val_accuracy_across_func.result())
+            #### within-category accuracy & across-category accruacy
+            indices_transformed, indices_nontransformed = find_indices_transformed(x[1], args)
+            correct_batch_transformed = tf.gather(correct_batch, indices_transformed) if tf.greater(tf.size(indices_transformed), 0) else []
+            correct_batch_nontransformed = tf.gather(correct_batch, indices_nontransformed) if tf.greater(tf.size(indices_nontransformed), 0) else []
+            num_correct_epoch_transformed += tf.math.count_nonzero(correct_batch_transformed)
+            num_correct_epoch_nontransformed += tf.math.count_nonzero(correct_batch_nontransformed)
+            batch_size_sum_transformed += len(correct_batch_transformed)
+            batch_size_sum_nontransformed += len(correct_batch_nontransformed)
+
+        val_loss = loss_sum / num_batches
+        val_correct = tf.concat(correct_epoch, axis=0)
+        val_accuracy = tf.math.count_nonzero(val_correct) / batch_size_sum
+        val_predict = tf.concat(predict_epoch, axis=0)
+        val_accuracy_within = num_correct_epoch_transformed / batch_size_sum_transformed
+        val_accuracy_across = num_correct_epoch_nontransformed / batch_size_sum_nontransformed
+
+        # stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1 ({:.4f})'.format(epoch, lr, val_loss, val_accuracy)
+        stat_str = '[Validation] Epoch ({}) LR ({:.4f}) Loss ({:.4f}) Accuracy1-Within ({:.4f}) Accuracy1-Across ({:.4f})'.format(epoch, lr, val_loss, val_accuracy_within, val_accuracy_across)
         print(stat_str)
         sys.stdout.flush()
 
-        accuracy1[i] = val_accuracy_func.result()
-        correct1[i,:] = tf.concat(correct_list, axis=0)
-        accuracy1_within[i] = val_accuracy_within_func.result()
-        accuracy1_across[i] = val_accuracy_across_func.result()
-        predict[i,:] = tf.concat(predict_list, axis=0)
+        accuracy1[i] = val_accuracy
+        correct1[i,:] = val_correct
+        accuracy1_within[i] = val_accuracy_within
+        accuracy1_across[i] = val_accuracy_across
+        predict[i,:] = val_predict
 
         val_loss_func.reset_states()
         val_accuracy_func.reset_states()
-        val_accuracy_within_func.reset_states()
-        val_accuracy_across_func.reset_states()
+        # val_accuracy_within_func.reset_states()
+        # val_accuracy_across_func.reset_states()
 
     data = {'path':path, 'target':target, 'params':params, 'is_transformed':args.is_transformed, 'accuracy1':accuracy1, 'correct1':correct1, 'accuracy1_within':accuracy1_within, 'accuracy1_across':accuracy1_across, 'predict':predict}
     with open(os.path.join(args.model_path, 'analysis_v4_accuracy_by_scale.pickle'), 'wb') as f:
         pickle.dump(data, f)
+
+def find_indices_transformed(labels, args):
+    indices_transformed, indices_nontransformed = [], []
+    def cond(i):
+        return tf.less(i, len(labels))
+    def body(i):
+        if tf.reduce_any(tf.equal(labels[i], args.category_orders[:args.num_categories_transformed])):
+            indices_transformed.append(i)
+        else:
+            indices_nontransformed.append(i)
+        return (tf.add(i, 1),)
+
+    tf.while_loop(cond, body, [tf.constant(0)])
+    indices_transformed, indices_nontransformed = tf.stack(indices_transformed), tf.stack(indices_nontransformed)
+    return indices_transformed, indices_nontransformed
 
 #################
 #### pytorch ####
@@ -544,11 +564,11 @@ if __name__ == '__main__':
         #     'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
         #     'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
         #
-        #     'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-        #     'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-        #     'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-        #     'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-        #     'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            'vitb16_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            'vitb16_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            'vitb16_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            'vitb16_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            'vitb16_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
         #
         #     'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
         #     'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
@@ -568,41 +588,41 @@ if __name__ == '__main__':
         #     'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
         #     'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
 
-            'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
-            'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            # 'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            # 'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            # 'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            # 'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            # 'cornets-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            #
+            # 'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            # 'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            # 'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            # 'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            # 'blnet-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            #
+            # 'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            # 'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            # 'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            # 'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            # 'convlstm3-3_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            #
+            # 'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            # 'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            # 'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            # 'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            # 'cornets-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            #
+            # 'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            # 'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            # 'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            # 'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            # 'blnet-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
+            #
+            # 'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
+            # 'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
+            # 'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
+            # 'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
+            # 'convlstm3-5_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
         ][args.id-1]
         args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
