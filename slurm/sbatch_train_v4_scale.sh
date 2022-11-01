@@ -4,10 +4,10 @@
 #SBATCH -c 4 # number of CPU cores associated with one GPU
 #SBATCH --gres=gpu:1 #  number of GPUs
 ##SBATCH --constraint=high-capacity
-#SBATCH --constraint=32GB
-#SBATCH --mem=24GB
+#SBATCH --constraint=24GB
+#SBATCH --mem=16GB
 ##SBATCH -p sinha
-#SBATCH --array=1-5
+#SBATCH --array=1-15
 #SBATCH -D /om2/user/jangh/DeepLearning/RobustFaceRecog/logs/v4/
 
 cd /om2/user/jangh/

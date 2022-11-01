@@ -32,7 +32,7 @@ from models.vgg import vgg19
 from models.resnet import resnet50
 from models.cornet_s import CORnet_S
 from models.bl_net import bl_net
-from models.convlstm import ConvLSTM3
+from models.convlstm_tf import ConvLSTM3
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -198,7 +198,7 @@ def main_tf(args):
         images, labels = inputs
         with tf.GradientTape() as tape:
             outputs = model(images, training=True)
-            if ('blnet' in args.model_name and 'blnet-1' != args.model_name):
+            if ('blnet' in args.model_name and 'blnet-1' != args.model_name) or ('convlstm' in args.model_name):
                 loss = 0.0
                 for output in outputs:
                     loss += compute_loss(labels, output)
@@ -218,7 +218,7 @@ def main_tf(args):
     def val(inputs):
         images, labels = inputs
         outputs = model(images, training=False)
-        if ('blnet' in args.model_name and 'blnet-1' != args.model_name):
+        if ('blnet' in args.model_name and 'blnet-1' != args.model_name) or ('convlstm' in args.model_name):
             loss = 0.0
             for output in outputs:
                 loss += compute_loss(labels, output)
@@ -542,92 +542,6 @@ if __name__ == '__main__':
     if args.is_slurm == True:
         #### scale
         args.model_format = [
-            #### blur
-            # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
-            # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
-            # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
-            # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
-            # 'alexnet_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
-            # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
-            # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
-            # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
-            # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
-            # 'vgg19_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
-            # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
-            # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
-            # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
-            # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
-            # 'resnet50_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            #
-            # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
-            # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
-            # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
-            # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
-            # 'vitb16_pretrained_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
-            # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
-            # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
-            # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
-            # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
-            # 'cornets-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
-            # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
-            # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
-            # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
-            # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
-            # 'blnet-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-            # 
-            # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_1_1_discrete_0',
-            # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_100_1_discrete_0',
-            # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_200_1_discrete_0',
-            # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0',
-            # 'convlstm3-1_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0',
-
-            #### scale
-            # 'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            # 'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            # 'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            # 'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            # 'alexnet_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-            #
-            # 'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            # 'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            # 'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            # 'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            # 'vgg19_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-            #
-            # 'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            # 'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            # 'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            # 'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            # 'resnet50_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-            #
-            # 'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            # 'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            # 'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            # 'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            # 'vitb16_pretrained_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-            #
-            # 'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            # 'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            # 'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            # 'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            # 'cornets-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-            #
-            # 'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            # 'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            # 'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            # 'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            # 'blnet-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-            #
-            # 'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_1_1_discrete_0',
-            # 'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_100_1_discrete_0',
-            # 'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_200_1_discrete_0',
-            # 'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_300_1_discrete_0',
-            # 'convlstm3-1_scratch_scale_discrete_1-0.9-0.8-0.7-0.6-0.5-0.4-0.3-0.2-0.1_388_1_discrete_0',
-
             #### rotate
             # 'alexnet_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
             # 'alexnet_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
@@ -646,13 +560,13 @@ if __name__ == '__main__':
             # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
             # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
             # 'resnet50_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-
-            'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-
+            #
+            # 'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
+            # 'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
+            # 'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
+            # 'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
+            # 'vitb16_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
+            #
             # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
             # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
             # 'vitb16_pretrained_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
@@ -670,12 +584,12 @@ if __name__ == '__main__':
             # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
             # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
             # 'blnet-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
+
+            'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
+            'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
+            'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
+            'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
+            'convlstm3-1_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
 
             # 'cornets-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
             # 'cornets-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
@@ -688,13 +602,13 @@ if __name__ == '__main__':
             # 'blnet-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
             # 'blnet-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
             # 'blnet-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
+
+            'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
+            'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
+            'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
+            'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
+            'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
+
             # 'cornets-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
             # 'cornets-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
             # 'cornets-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
@@ -706,91 +620,12 @@ if __name__ == '__main__':
             # 'blnet-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
             # 'blnet-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
             # 'blnet-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
-            #
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
 
-            #### rotate (v2)
-            # 'alexnet_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'alexnet_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'vgg19_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'vgg19_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'resnet50_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'resnet50_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'vitb16_pretrained_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'vitb16_pretrained_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'cornets-1_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'cornets-1_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'blnet-1_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'blnet-1_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'convlstm3-1_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'cornets-3_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'cornets-3_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'cornets-3_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'cornets-3_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'cornets-3_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'blnet-3_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'blnet-3_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'blnet-3_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'blnet-3_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'blnet-3_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'convlstm3-3_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'cornets-5_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'cornets-5_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'cornets-5_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'cornets-5_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'cornets-5_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'blnet-5_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'blnet-5_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'blnet-5_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'blnet-5_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'blnet-5_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
-            #
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-315_1_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-315_100_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-315_200_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-315_300_1_discrete_0',
-            # 'convlstm3-5_scratch_rotate_discrete_0-45-315_388_1_discrete_0',
+            'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_1_1_discrete_0',
+            'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_100_1_discrete_0',
+            'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_200_1_discrete_0',
+            'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0',
+            'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_388_1_discrete_0',
         ][args.id-1]
         args.model_path = '/om2/user/jangh/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'

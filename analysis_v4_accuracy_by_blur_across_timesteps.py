@@ -193,7 +193,7 @@ def main_tf(args):
         # images, labels = inputs
         images, labels, timestep = inputs
         outputs = model(images, training=False)
-        if 'blnet' in args.model_name:
+        if ('blnet' in args.model_name and 'blnet-1' != args.model_name) or ('convlstm' in args.model_name):
             loss = 0.0
             for output in outputs:
                 loss += compute_loss(labels, output)
@@ -598,8 +598,8 @@ if __name__ == '__main__':
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
         args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
     elif args.is_slurm == False:
-        # args.model_format = 'cornets-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_388_1_discrete_0'
-        args.model_format = 'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0'
+        args.model_format = 'cornets-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0'
+        # args.model_format = 'blnet-3_scratch_blur_discrete_0-0.5-1-1.5-2-2.5-3-3.5-4_300_1_discrete_0'
         args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/data/'
         args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrub/csv/'

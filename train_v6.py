@@ -54,8 +54,8 @@ def main_tf(args):
     num_categories = 388 # 388
     batch_size = 32
     lr = 1e-3
-    total_epochs = 300
-    save_epochs = 300
+    total_epochs = 150
+    save_epochs = 150
     input_size = (100, 100, 3)
 
     random.seed(args.trial) # seed fixed
@@ -327,8 +327,8 @@ def main_torch(args):
     num_categories = 388 # 388
     batch_size = 32
     lr = 1e-3
-    total_epochs = 300
-    save_epochs = 300
+    total_epochs = 150
+    save_epochs = 150
     input_size = (3, 100, 100)
 
     random.seed(args.trial) # seed fixed
@@ -575,7 +575,8 @@ if __name__ == '__main__':
         args.data_path = '/om2/user/jangh/Datasets/FaceScrub/data/'
         args.csv_path = '/om2/user/jangh/Datasets/FaceScrub/csv/'
     elif args.is_slurm == False:
-        args.model_format = 'convlstm3-5_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0'
+        # args.model_format = 'convlstm3-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0'
+        args.model_format = 'convlstm3v2-3_scratch_rotate_discrete_0-45-90-135-180-225-270-315_300_1_discrete_0'
         args.model_path = '/Users/hojinjang/Desktop/DeepLearning/RobustFaceRecog/results/v{}/{}'.format(args.version, args.model_format)
         args.data_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubMini/data/'
         args.csv_path = '/Users/hojinjang/Desktop/Datasets/FaceScrubMini/csv/'
